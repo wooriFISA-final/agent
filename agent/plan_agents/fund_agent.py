@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import TypedDict, Annotated, Dict, Any 
 from langgraph.graph import StateGraph, END 
 
+# 펀드 에이전트
+
 # LangGraph 상태(State) 정의
 class FundAgentState(TypedDict):
     fund_data_path: str
