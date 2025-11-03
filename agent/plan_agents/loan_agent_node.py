@@ -14,7 +14,7 @@ DB_NAME = os.getenv("database")
 
 class LoanAgentNode:
     """
-    LoanAgentNode v7
+    LoanAgentNode
     ---------------------------------------------------------
     사용자(user_info), 계획(plan_input), 지역(state), 상품(loan_product)을 통합하여
     직업유형(직장인/공무원/자영업/프리랜서)에 맞는 대출 상품을 추천하고,

@@ -186,10 +186,10 @@ class PlanAgentNode:
         self.summarize(responses)
 
 
-# ------------------------------------------------
-# 실행
-# ------------------------------------------------
-if __name__ == "__main__":
-    print("PlanAgentNode 시작 (입력 → 검증 → 저장)\n")
-    agent_node = PlanAgentNode()
-    agent_node.run()
+# # ------------------------------------------------
+# # 실행
+# # ------------------------------------------------
+# if __name__ == "__main__":
+#     print("PlanAgentNode 시작 (입력 → 검증 → 저장)\n")
+#     agent_node = PlanAgentNode()
+#     agent_node.run()
