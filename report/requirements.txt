@@ -146,3 +146,4 @@ scikit-learn
 matplotlib
 seaborn
 requests
+ollama
