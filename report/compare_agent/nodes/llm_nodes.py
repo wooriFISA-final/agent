@@ -1,6 +1,6 @@
-from report.compare_agent.state import AgentState
-from report.compare_agent.llm.ollama_llm import ollama_llm
-from langchain.schema import SystemMessage, HumanMessage
+from state import AgentState
+from llm.ollama_llm import ollama_llm
+from langchain_core.messages import SystemMessage, HumanMessage
 
 ##########################################
 ###  LLM 활용이 필요한 노드들을 정의하는 파일   ###

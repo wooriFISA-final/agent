@@ -1,8 +1,8 @@
 from langgraph.graph import StateGraph, END
-from report.compare_agent.state import AgentState
-from report.compare_agent.nodes.tool_nodes import (
+from state import AgentState
+from nodes.tool_nodes import (
     load_prev_month_report, load_house_info, load_policy_info, load_credit_info)
-from report.compare_agent.nodes.llm_nodes import compare_changes
+from nodes.llm_nodes import compare_changes
 
 
 def build_graph():

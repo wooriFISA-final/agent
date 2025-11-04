@@ -1,5 +1,5 @@
 import requests
-from report.compare_agent.state import AgentState
+from state import AgentState
 
 # 필요에 따라서 내부 url 을 변경하거나, .env 파일에서 불러오기
 MCP_BASE_URL = "http://localhost:8001"

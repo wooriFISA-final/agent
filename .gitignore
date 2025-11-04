@@ -337,3 +337,4 @@ __pycache__/
 GEMINI.md
 .geminiignore
 */__pycache__/
+/__pycache__
