@@ -15,7 +15,8 @@ import sys
 # 1. Agent 클래스 정의 (모든 Task 로직 포함)
 # ----------------------------------------------------
 class ConsumptionAgent:
-    def __init__(self, knn_path, scaler_path, profile_path, data_path, ollama_model_name="qwen3:8b"):
+    # 🌟 Ollama 모델 기본값을 llama3:8b로 설정
+    def __init__(self, knn_path, scaler_path, profile_path, data_path, ollama_model_name="llama3:8b"):
         try:
             # 1. 자산 로드 (경로: /models 및 /data)
             with open(knn_path, 'rb') as f:
@@ -31,8 +32,9 @@ class ConsumptionAgent:
             self.ollama_model_name = ollama_model_name
             self.K_CLUSTERS = self.df_profile.shape[0]
             
-            # 3. 한글 폰트 설정 (Windows 환경을 고려하여 Malgun Gothic 선호)
-            plt.rcParams['font.family'] = 'Malgun Gothic' if sys.platform.startswith('win') else 'NanumGothic'
+            # 3. 한글 폰트 설정 (Mac 환경 고려 'AppleGothic'으로 수정)
+            # 💡 수정 반영: Mac 환경에서 한글 깨짐 방지
+            plt.rcParams['font.family'] = 'Malgun Gothic' if sys.platform.startswith('win') else 'AppleGothic'
             plt.rcParams['axes.unicode_minus'] = False 
             
             print("✅ Agent 초기화: 모델, 스케일러, 프로파일 로드 완료.")
@@ -103,8 +105,8 @@ class ConsumptionAgent:
         }
         
         try:
-            # 💡 Ollama 통신 오류 해결 방안 1: 타임아웃을 180초(3분)로 대폭 증가
-            response = requests.post("http://localhost:11434/api/generate", json=payload, timeout=180) 
+            # 💡 수정 반영: 타임아웃을 300초(5분)로 대폭 증가
+            response = requests.post("http://localhost:11434/api/generate", json=payload, timeout=300) 
             response.raise_for_status() 
             final_report = response.json()['response'].strip()
             return final_report
@@ -159,8 +161,8 @@ if __name__ == "__main__":
     SCALER_MODEL_PATH = 'models/scaler.pkl'
     KNN_MODEL_PATH = 'models/knn_model.pkl'
 
-    # 🌟 Ollama 모델 설정
-    AGENT_OLLAMA_MODEL = "qwen3:8b" 
+    # 🌟 Ollama 모델 설정 (llama3:8b 사용)
+    AGENT_OLLAMA_MODEL = "llama3:8b"
     
     # 1. Agent 객체 생성 및 초기화
     try:
@@ -186,7 +188,7 @@ if __name__ == "__main__":
 
     print(f"\n--- 🔎 사용자 ID: {EXAMPLE_USER_ID} 분석 시작 ---")
 
-    # 3. 분석 파이프라인 실행
+    # 3. 분석 파이프라인 실행s
     try:
         # Task 2/2-2: 군집 예측 및 데이터 추출
         user_cluster, user_data = agent.get_user_cluster(EXAMPLE_USER_ID)
@@ -217,6 +219,6 @@ if __name__ == "__main__":
         
     except Exception as e:
         print(f"\n❌ 파이프라인 실행 중 치명적인 오류 발생: {e}")
-        # Ollama 오류 발생 시, 서버 확인 안내 재강조
+        # 💡 수정 반영: Ollama 오류 시 현재 사용하는 모델로 안내
         if "Ollama 통신 오류" in str(e):
-             print("💡 **Ollama 서버**가 'ollama run qwen3:8b' 상태로 **정상 실행 중인지** 다시 확인해 주세요.")
+             print(f"💡 **Ollama 서버**가 'ollama run {AGENT_OLLAMA_MODEL}' 상태로 **정상 실행 중인지** 다시 확인해 주세요.")

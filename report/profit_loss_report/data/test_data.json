@@ -1,0 +1,34 @@
+{
+    "report_date": "2025-10-31",
+    "deposits": [
+      {
+        "product_id": "DEP001",
+        "contract_date": "2024-01-01",
+        "total_period_months": 12,
+        "principal": 10000000,
+        "interest_rate": 0.04,
+        "tax_rate": 0.154
+      }
+    ],
+    "savings": [
+      {
+        "product_id": "SAV001",
+        "contract_date": "2025-03-01",
+        "total_period_months": 24,
+        "monthly_payment": 500000,
+        "interest_rate": 0.05,
+        "tax_rate": 0.154
+      }
+    ],
+    "funds": [
+      {
+        "product_id": "FUN001",
+        "contract_date": "2024-05-15",
+        "transaction_amount": 5000000,
+        "purchase_nav": 1000.0,
+        "current_nav": 1150.0,
+        "total_shares": 5000.0,
+        "fee_rate": 0.005
+      }
+    ]
+  }
