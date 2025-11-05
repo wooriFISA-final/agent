@@ -1,15 +1,14 @@
 import os
 import re
 import ollama
-from sqlalchemy import create_engine, Column, Integer, String
+# ✅ [수정] Enum, BigInteger, DateTime, ForeignKey, func 추가
+from sqlalchemy import create_engine, Column, Integer, String, BigInteger, Enum, ForeignKey, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.sql import func # created_at을 위해 추가
 from dotenv import load_dotenv
-from input_loan_agent.validation_agent import ValidationAgent
+import json
 
-
-# ------------------------------------------------
-# 환경설정 및 ORM 초기화
-# ------------------------------------------------
+# ... (DB 설정 - 변경 없음) ...
 load_dotenv()
 DB_USER = os.getenv("user")
 DB_PASSWORD = os.getenv("password")
@@ -22,108 +21,106 @@ Session = sessionmaker(bind=engine)
 session = Session()
 
 
-# ------------------------------------------------
-# PlanInput 테이블 정의
-# ------------------------------------------------
+# ✅ [수정] 1. user_info 테이블 모델 (새 스키마)
+class UserInfo(Base):
+    __tablename__ = "user_info"
+
+    user_id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(50), nullable=False)
+    age = Column(Integer)
+    gender = Column(Enum('M', 'F')) # ENUM 타입 사용
+    region = Column(String(100))
+    income = Column(BigInteger)
+    monthly_salary = Column(BigInteger)
+    job_type = Column(String(50))
+    employment_years = Column(Integer)
+    # (참고: 기존의 username, email, created_at 등은 새 스키마에 없으므로 제거됨)
+
+
+# (변경 없음) 2. plan_input 테이블 모델 (이전과 동일)
 class PlanInput(Base):
     __tablename__ = "plan_input"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    target_house_price = Column(String(50))
+    
+    # 이 FK 정의는 user_info의 PK가 user_id이므로 여전히 유효합니다.
+    user_id = Column(Integer, ForeignKey("user_info.user_id", ondelete="CASCADE"), nullable=False)
+    
+    target_house_price = Column(BigInteger)
     target_location = Column(String(100))
     housing_type = Column(String(50))
-    available_assets = Column(String(50))
-    target_period_years = Column(String(50))
-    saving_ratio = Column(Integer)
-    investment_ratio = Column(Integer)
-    income_usage_ratio = Column(String(50))
+    available_assets = Column(BigInteger)
+    income_usage_ratio = Column(Integer)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
+# 이 코드는 위의 두 테이블을 생성/업데이트합니다.
 Base.metadata.create_all(engine)
 
-
 # ------------------------------------------------
-# PlanAgentNode (사용자 입력 수집 및 검증)
+# PlanAgentNode (이하 모든 코드는 변경할 필요가 없습니다)
 # ------------------------------------------------
 class PlanAgentNode:
     """사용자 입력 수집 및 ValidationAgent와 연동"""
 
     def __init__(self, model="qwen3:8b"):
         self.model = model
-        self.validator = ValidationAgent()  # ✅ ValidationAgent 인스턴스화
-
-        self.questions = [
-            ("target_house_price", "목표 주택 가격이 얼마인가요? (원 단위로 입력해주세요)"),
-            ("target_location", 
-             "주택 위치는 어디인가요? (예: 서울 송파구 / 그 외 지역은 시까지만 입력해주세요. 예: 부산광역시, 세종특별자치시)"),
-            ("housing_type", "주거지 형태를 선택해주세요 (1: 아파트, 2: 연립/다세대, 3: 단독주택, 4: 오피스텔)"),
-            ("available_assets", "현재 사용 가능한 자산은 얼마인가요? (원 단위로 입력해주세요)"),
-            ("target_period_years", "목표 달성 기간은 몇 년인가요?"),
-            ("saving_investment_ratio", "예/적금과 투자 비율은 어떻게 나누시겠어요? (예: 60 대 40)"),
-            ("income_usage_ratio", "월급에서 저축/투자에 사용할 비율은 몇 퍼센트인가요?")
-        ]
-
-    # ------------------------------------------------
-    def ask_llm(self, question: str):
-        """LLM이 질문을 그대로 출력 + 간단 설명 추가"""
-        system_prompt = (
-            "너는 재무 상담 AI야. "
-            "사용자가 입력한 질문을 먼저 그대로 출력한 다음, "
-            "간단한 예시나 안내 문장을 한 줄로 덧붙여줘. "
-            "예시는 자연스럽게 '~해주세요' 어미로 끝내."
-        )
-        res = ollama.chat(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": question}
-            ]
-        )
-        return res["message"]["content"].strip()
-
-    # ------------------------------------------------
-    def parse_input(self, key, value):
-        """예/적금과 투자 비율 처리"""
-        if key == "saving_investment_ratio":
-            parts = [int(x) for x in re.findall(r"\d+", value)]
-            if len(parts) == 2:
-                return {"saving_ratio": parts[0], "investment_ratio": parts[1]}
-            elif len(parts) == 1:
-                return {"saving_ratio": parts[0], "investment_ratio": 100 - parts[0]}
-            else:
-                return {"saving_ratio": 50, "investment_ratio": 50}
-        return value
+        
+        self.required_info = {
+            "target_house_price": "목표 주택 가격 (원 단위, 숫자만)",
+            "target_location": "주택 위치 (예: 서울 송파구, 부산광역시)",
+            "housing_type": "주거지 형태 (아파트, 연립/다세대, 단독주택, 오피스텔 중 하나)",
+            "available_assets": "현재 사용 가능한 자산 (원 단위, 숫자만)",
+            "income_usage_ratio": "월급에서 저축/투자에 사용할 비율 (퍼센트, 숫자만)"
+        }
 
     # ------------------------------------------------
     def normalize_location(self, location: str):
-        """서울 외 지역은 시 단위까지만 남기고 평균값 기준으로 처리"""
+        # (변경 없음)
         location = location.strip()
-
-        # 서울특별시는 구 단위 유지
         if location.startswith("서울"):
             return location
-
-        # 나머지는 '시' 또는 '특별자치시'까지만 남김
         match = re.match(r"^(\S+시|\S+특별자치시)", location)
         if match:
             normalized = match.group(1)
             print(f"입력하신 지역 '{location}'은 '{normalized}' 평균 기준으로 처리됩니다.")
             return normalized
-        
-        # 기본 fallback (입력값 그대로 사용)
         return location
 
     # ------------------------------------------------
-    def save_to_db(self, data):
-        """DB 저장"""
-        record = PlanInput(**data)
-        session.add(record)
-        session.commit()
-        print("\n[DB 저장 완료]")
+    def save_to_db(self, data: dict, user_id: int):
+        # (변경 없음)
+        """
+        DB 저장 (user_id를 인자로 받고, 숫자 변환 수행)
+        """
+        try:
+            processed_data = {
+                "target_house_price": int(data["target_house_price"]),
+                "target_location": data["target_location"],
+                "housing_type": data["housing_type"],
+                "available_assets": int(data["available_assets"]),
+                "income_usage_ratio": int(data["income_usage_ratio"]),
+                "user_id": user_id
+            }
+            
+            record = PlanInput(**processed_data)
+            session.add(record)
+            session.commit()
+            print(f"\n[DB 저장 완료] user_id: {user_id}, plan_id: {record.id}")
+            return record.id 
+            
+        except Exception as e:
+            session.rollback()
+            print(f"\n[DB 저장 오류] 롤백 수행. 오류: {e}")
+            print(f"저장 시도 데이터: {data}")
+            return None
 
     # ------------------------------------------------
     def summarize(self, responses):
-        """입력 요약"""
+        # (변경 없음)
         location_note = " (※ 서울특별시는 구 단위 기준, 그 외 지역은 시 평균 기준)"
+        
         summary = f"""
         [입력 요약]
         ---------------------------------
@@ -131,65 +128,124 @@ class PlanAgentNode:
         - 위치: {responses['target_location']}{location_note}
         - 주거지 형태: {responses['housing_type']}
         - 사용 가능 자산: {responses['available_assets']}원
-        - 목표 기간: {responses['target_period_years']}년
-        - 예금 비율: {responses['saving_ratio']}%
-        - 투자 비율: {responses['investment_ratio']}%
         - 소득 활용 비율: {responses['income_usage_ratio']}%
         ---------------------------------
         """
         print(summary)
 
     # ------------------------------------------------
-    def run(self):
-        """전체 입력 및 검증 파이프라인"""
-        responses = {}
+    def extract_info_with_llm(self, conversation_history):
+        # (변경 없음)
+        system_prompt = f"""
+        당신은 사용자의 대화 내용을 분석하여 재무 계획에 필요한 정보를 추출하는 AI입니다.
+        대화 내용을 바탕으로 다음 항목들을 채워야 합니다.
+        
+        [추출 항목]
+        {json.dumps(self.required_info, indent=2, ensure_ascii=False)}
 
-        for key, question in self.questions:
-            llm_question = self.ask_llm(question)
-            print(f"\n{llm_question}")
+        [규칙]
+        1. 모든 항목을 반드시 채워야 합니다. 만약 정보가 부족하면 "정보 부족"이라고 명확히 표시하세요.
+        2. 'housing_type'은 반드시 [아파트, 연립/다세대, 단독주택, 오피스텔] 중 하나여야 합니다.
+        3. 사용자가 "10억"이라고 말하면 "1000000000"으로, "2억 5천"이라고 하면 "250000000"으로 변환해야 합니다.
+        4. 'income_usage_ratio'는 "50%"라고 하면 "50"으로 숫자만 추출합니다.
+        5. 최종 결과는 반드시 JSON 형식으로만 반환해야 합니다. 다른 설명은 붙이지 마세요.
+        
+        [JSON 출력 예시]
+        {{
+          "target_house_price": "1000000000",
+          "target_location": "서울 송파구",
+          "housing_type": "아파트",
+          "available_assets": "200000000",
+          "income_usage_ratio": "50"
+        }}
+        """
+        
+        messages = [{"role": "system", "content": system_prompt}]
+        messages.extend(conversation_history) 
 
-            # 주거지 형태 선택
-            if key == "housing_type":
-                print("1. 아파트\n2. 연립/다세대\n3. 단독주택\n4. 오피스텔")
-                while True:
-                    choice = input("번호를 선택해주세요 (1~4): ")
-                    mapping = {"1": "아파트", "2": "연립/다세대", "3": "단독주택", "4": "오피스텔"}
-                    if choice in mapping:
-                        responses[key] = mapping[choice]
-                        break
-                    else:
-                        print("잘못된 입력입니다. 다시 선택해주세요.")
+        res = ollama.chat(
+            model=self.model,
+            messages=messages,
+            options={"temperature": 0.0} 
+        )
+        
+        response_text = res["message"]["content"].strip()
+        
+        try:
+            json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                extracted_data = json.loads(json_str)
+                return extracted_data, None 
+            else:
+                raise json.JSONDecodeError("No JSON object found", response_text, 0)
+                
+        except json.JSONDecodeError as e:
+            print(f"[LLM 파싱 오류] LLM 응답: {response_text}")
+            return None, f"LLM이 유효한 JSON을 반환하지 못했습니다: {e}"
+
+    # ------------------------------------------------
+    def run_conversational(self, conversation_history: list):
+        # (변경 없음)
+        print("재무 계획을 위한 상담을 시작하겠습니다. 자유롭게 말씀해주세요.")
+        print("예: '서울 송파구에 10억짜리 아파트를 사고 싶어요. ...'")
+        print("정보가 부족하면 제가 추가로 질문하겠습니다. (종료하시려면 '종료' 입력)\n")
+        
+        if not conversation_history:
+             conversation_history.append({"role": "assistant", "content": "재무 계획 상담을 시작하겠습니다. 필요한 정보를 말씀해주세요."})
+        elif len(conversation_history) > 1:
+             print(f"AI: {conversation_history[-1]['content']}")
+
+        while True:
+            user_input = input("사용자: ")
+            if user_input == "종료":
+                print("상담을 종료합니다.")
+                return None, conversation_history 
+
+            conversation_history.append({"role": "user", "content": user_input})
+            
+            print("\n[대화 내용 분석 중...]")
+            extracted_data, error = self.extract_info_with_llm(conversation_history)
+            
+            if error:
+                print(f"[LLM 파싱 오류] {error}")
+                print("다시 말씀해주시겠어요?")
+                conversation_history.pop() 
                 continue
 
-            # 사용자 입력
-            answer = input("사용자: ")
-            parsed = self.parse_input(key, answer)
-
-            # 위치 정규화 처리 (서울 외 지역은 시 단위로 단순화)
-            if key == "target_location":
-                parsed = self.normalize_location(parsed)
-
-            # 딕셔너리면 unpack, 아니면 그대로 저장
-            if isinstance(parsed, dict):
-                responses.update(parsed)
+            missing_info = []
+            for key, desc in self.required_info.items():
+                if not extracted_data.get(key) or extracted_data.get(key) == "정보 부족":
+                    missing_info.append(desc)
+            
+            if not missing_info:
+                print("[모든 정보 수집 완료. 검증 노드로 전달합니다.]")
+                return extracted_data, conversation_history 
+            
             else:
-                responses[key] = parsed
-
-        # ✅ 1️⃣ 입력값 검증
-        print("\n[입력값 검증 중...]")
-        if not self.validator.run(responses):  # DB 기반 검증 수행
-            print("입력값 검증 실패. 저장이 취소되었습니다.")
-            return
-
-        # ✅ 2️⃣ 검증 통과 시 저장
-        self.save_to_db(responses)
-        self.summarize(responses)
-
-
-# # ------------------------------------------------
-# # 실행
-# # ------------------------------------------------
-# if __name__ == "__main__":
-#     print("PlanAgentNode 시작 (입력 → 검증 → 저장)\n")
-#     agent_node = PlanAgentNode()
-#     agent_node.run()
+                missing_str = ", ".join(missing_info)
+                ai_question = f"말씀 감사합니다. 추가적으로 {missing_str} 정보가 필요합니다. 알려주시겠어요?"
+                print(f"AI: {ai_question}")
+                conversation_history.append({"role": "assistant", "content": ai_question})
+        
+    # ------------------------------------------------
+    def run_as_node(self, state: dict) -> dict:
+        # (변경 없음)
+        print("\n[Node: PlanInputNode 시작]")
+        
+        conversation_history = state.get("messages", [])
+        
+        responses, new_history = self.run_conversational(conversation_history) 
+        
+        state["messages"] = new_history 
+        
+        if responses:
+            print(f"[Node: PlanInputNode] 정보 수집 완료.")
+            state["responses"] = responses      
+            state["input_completed"] = True     
+        else:
+            print(f"[Node: PlanInputNode] 사용자가 입력을 중단했습니다.")
+            state["input_completed"] = False    
+        
+        print("[Node: PlanInputNode 완료]")
+        return state
