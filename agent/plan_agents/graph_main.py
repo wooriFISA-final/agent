@@ -120,6 +120,7 @@ def save_and_summarize_node(state: GraphState) -> GraphState:
     return state
 
 # ✅ [추가] 6. 대출 추천 노드
+# [노드 4: 대출 추천]
 def loan_recommend_node(state: GraphState) -> GraphState:
     """
     '저장/요약' 노드 이후 실행.
@@ -127,25 +128,38 @@ def loan_recommend_node(state: GraphState) -> GraphState:
     """
     print("\n--- [D. 대출 추천 노드 시작] ---")
     user_id = state.get("user_id")
-    plan_id = state.get("plan_id") # 방금 저장된 plan_id
+    # plan_id는 loan_agent가 이제 무시하므로 user_id만 체크
+    plan_id_to_log = state.get("plan_id", "N/A (user_id로 조회)") 
 
-    if not user_id or not plan_id:
-        print(f"⚠️ LoanNode: user_id({user_id}) 또는 plan_id({plan_id})가 없습니다. 스킵.")
-        state["error_message"] = "플랜 ID가 없어 대출 추천을 스킵합니다."
-        # 이 단계에서 오류가 나도 재시도(input)로 돌아갈 필요는 없으므로 END로 진행
+    if not user_id:
+        print("⚠️ 대출 추천 실패: state에서 user_id를 찾을 수 없습니다.")
+        state["error_message"] = "사용자 ID를 찾을 수 없습니다."
         return state
 
+    print(f"LoanAgent.run(user_id={user_id}, plan_id={plan_id_to_log}) 실행...") 
+    
     try:
-        print(f"LoanAgent.run(user_id={user_id}, plan_id={plan_id}) 실행...")
-        loan_result = loan_agent.run(user_id=user_id, plan_id=plan_id)
+        # loan_agent는 user_id로 최신 plan을 찾으므로 plan_id는 0을 넘겨도 무방합니다.
+        loan_result = loan_agent.run(user_id=user_id, plan_id=0) 
         
-        if loan_result.get("message"): # loan_agent 내부에서 오류가 발생한 경우
-             print(f"⚠️ 대출 추천 실패: {loan_result.get('message')}")
-             state["error_message"] = loan_result.get('message')
+        # --- 👇👇 여기가 수정된 부분입니다 ---
+        if "message" in loan_result:
+            # 대출 추천 실패 시
+            print(f"⚠️ 대출 추천 실패: {loan_result['message']}")
+            state["error_message"] = loan_result['message']
         else:
-            print(f"✅ 대출 추천 완료: {loan_result.get('loan_name')}")
-            # 최종 결과를 'responses'에 병합하여 사용자에게 보여줄 수 있도록 함
+            # 대출 추천 성공 시
+            loan_name = loan_result.get('loan_name', 'N/A')
+            llm_exp = loan_result.get('llm_explanation', '(설명 없음)') # <--- llm_explanation 값을 가져옴
+            
+            print(f"✅ 대출 추천 완료: {loan_name}")
+            print("--- LLM 추천 사유 ---")
+            print(llm_exp)  # <--- 가져온 값을 출력!
+            print("-----------------------")
+            
+            # 최종 결과를 state에 저장
             state["responses"].update(loan_result)
+        # --- 👆👆 여기까지 ---
         
     except Exception as e:
         print(f"❌ 대출 추천 중 심각한 오류 발생: {e}")

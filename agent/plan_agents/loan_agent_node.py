@@ -265,15 +265,17 @@ class LoanAgentNode:
         [Tool] LLM을 호출하여 사용자 맞춤형 추천 사유를 생성합니다.
         (이것이 LLM의 "페르소나"와 "TASK"가 정의되는 부분입니다.)
         
+        [수정] shortage의 의미가 (목표가 - 대출액)으로 변경되었습니다.
+        
         :param user: 사용자 정보
         :param plan: 주택 구매 계획
         :param loan: 추천된 대출 상품 정보
-        :param shortage: 대출 후 부족한 금액
+        :param shortage: [수정] 대출 실행 후 남은 금액 (목표가 - 대출액)
         :return: LLM이 생성한 추천 사유 텍스트
         """
         
         # --------------------------------------------------------------
-        # ✅ LLM 페르소나 및 TASK 정의
+        # ✅ LLM 페르소나 및 TASK 정의 (수정됨)
         # --------------------------------------------------------------
         prompt = f"""
         [페르소나]
@@ -283,8 +285,12 @@ class LoanAgentNode:
         [TASK]
         아래 [고객 정보]와 [추천 상품]을 바탕으로, 왜 이 상품이 고객님께 적합한지 2~3문장의 간결한 추천 사유를 작성해 주세요.
         - 고객의 직업, 소득, 목표 주택 가격을 자연스럽게 언급하세요.
-        - [수정] (DSR 검증이 제거되었으므로) '월 상환액이 소득 대비 안정적'이라는 말 대신, '월 상환액'과 '부족 금액'을 명확히 안내하는 데 집중하세요.
-        - 대출 실행 후 부족한 금액(shortage)을 명시하고, 이 부분에 대한 자금 계획이 필요함을 부드럽게 언급해 주세요.
+        - '월 상환액'과 '대출 실행 후 남은 금액'을 명확히 안내하는 데 집중하세요.
+        
+        [중요 지시]
+        - [추천 상품] 섹션의 '대출 실행 후 남은 금액'({shortage:,}원)을 **반드시 정확하게** 읽어서 말해야 합니다.
+        - 이 금액은 고객이 보유 자산({int(plan['available_assets']):,}원)으로 충당해야 할 금액임을 부드럽게 언급해 주세요.
+        - 절대 다른 숫자를 지어내지 마세요.
 
         [고객 정보]
         - 직업: {user.get("job_type", "N/A")}
@@ -299,7 +305,7 @@ class LoanAgentNode:
         - 금리: {loan['interest_rate']:.2f}%
         - 기간: {loan['period_years']}년
         - 월 상환액: {round(loan['monthly_payment']):,}원
-        - 대출 실행 후 추가 필요 금액(부족분): {shortage:,}원
+        - 대출 실행 후 남은 금액 (고객 부담금): {shortage:,}원
         
         [추천 사유 작성]
         (여기에 2-3문장으로 작성)
@@ -367,15 +373,23 @@ class LoanAgentNode:
                 # [수정] 이 로직은 이제 거의 발생하지 않음 (LTV마저 0일 때)
                 return {"message": "고객님의 조건(LTV)으로는 대출이 불가능합니다."}
 
-            # --- 결과 계산 ---
+            # --- 결과 계산 (수정됨) ---
             # (목표가 - 대출액) = 대출 실행 후 남은 금액 (내가 내야 할 돈)
             remaining_after_loan = int(plan["target_house_price"]) - loan_amount
-            # (남은 금액 - 내 자산) = 최종 부족 금액
-            shortage = remaining_after_loan - int(plan["available_assets"])
+            
+            # [수정] shortage = (목표가 - 대출액)
+            shortage = remaining_after_loan
             if shortage < 0:
-                shortage = 0 # 내 자산이 더 많으면 부족분은 0원
+                shortage = 0 # (혹시 모를 경우 대비)
+            
+            # [기존 로직]
+            # (남은 금액 - 내 자산) = 최종 부족 금액
+            # shortage = remaining_after_loan - int(plan["available_assets"])
+            # if shortage < 0:
+            #     shortage = 0 # 내 자산이 더 많으면 부족분은 0원
 
             # --- LLM Tool 실행 ---
+            # [수정] LLM에게 (목표가 - 대출액) 값을 'shortage'로 전달
             explanation = self._generate_explanation(user, plan, best, shortage)
 
             # --- DB 업데이트 ---
@@ -411,8 +425,8 @@ class LoanAgentNode:
                 "interest_rate": best.get("interest_rate"),
                 "monthly_payment": round(monthly_payment),
                 "period_years": best.get("period_years"),
-                "remaining_after_loan": remaining_after_loan,
-                "shortage_amount": shortage,
+                # [수정] shortage_amount의 의미가 변경됨 (최종 부족분 -> 대출 후 남은 금액)
+                "shortage_amount": shortage, 
                 "credit_score": user.get("credit_score"),
                 "monthly_income": monthly_income_val,
                 "repayment_method": best.get("repayment_method"),
