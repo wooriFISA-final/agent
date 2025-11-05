@@ -170,7 +170,8 @@ class PlanAgentNode:
         )
         
         response_text = res["message"]["content"].strip()
-        
+        return response_text
+    
         try:
             json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
             if json_match:
