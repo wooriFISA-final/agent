@@ -31,3 +31,5 @@ langchain-core
 # matplotlib, seaborn: 시각화 함수가 포함되어 있으므로 추가
 matplotlib
 seaborn
+pymupdf  # pdf를 읽어오기 위함
+pyhwp  # 한글 파일을 읽어오기 위함

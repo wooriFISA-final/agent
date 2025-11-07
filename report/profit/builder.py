@@ -7,7 +7,7 @@ import pandas as pd
 from state import AgentState 
 from nodes.tool_nodes import (
     aggregate_financial_data_node as aggregate_data_processor, 
-    load_data as raw_data_loader
+    # load_data는 위에서 이미 임포트했으므로 제거
 )
 from nodes.llm_nodes import (
     generate_visualization_data as vis_data_generator, 
@@ -31,7 +31,7 @@ def load_data_node(state: AgentState) -> dict:
         return {"raw_data": raw_data}
 
     try:
-        raw_data = raw_data_loader() # tool_nodes.load_data 호출 (파일 로드 로직)
+        raw_data = load_data() # tool_nodes.load_data 호출 (파일 로드 로직)
         return {"raw_data": raw_data}
     except Exception as e:
         print(f"❌ 데이터 로드 실패: {e}")

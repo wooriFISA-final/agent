@@ -24,34 +24,52 @@ QWEN_MODEL = 'qwen3:8b'
 # 1. 🔍 compare 에이전트용: 변동 사항 비교 및 요약 노드
 # ==============================================================================
 def compare_changes_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    이전 데이터와 현재 변동 사항을 비교하고 LLM을 사용하여 결과를 요약합니다.
-    Args:
-        state: 'report_data', 'house_info', 'policy_info', 'credit_info' 키를 포함하는 상태 딕셔너리.
-    """
-    print("🔍 [LLM Node] 변동 사항 비교 및 요약 시작...")
+    print("🔍 변동 사항 비교 및 요약 시작...")
+    
+    policy_data = state.get('policy_info', {})
+    old_policy_chapters = policy_data.get('old_policy', [])
+    new_policy_chapters = policy_data.get('new_policy', [])
+    
+    # 1. 정책 내용을 문자열로 포맷팅
+    old_policy_text = "\n\n--- [구 버전 정책 (20241224) 장별 내용] ---\n"
+    for chapter in old_policy_chapters:
+        old_policy_text += f"[{chapter['title']}]\n{chapter['content'][:200]}...\n" # 200자 제한
+    
+    new_policy_text = "\n\n--- [신 버전 정책 (20250305) 장별 내용] ---\n"
+    for chapter in new_policy_chapters:
+        new_policy_text += f"[{chapter['title']}]\n{chapter['content'][:200]}...\n" # 200자 제한
+
 
     prompt = f"""
-    아래는 이전 달 데이터와 새로 불러온 데이터입니다.
-    변동 사항을 간결하고 논리적으로 요약해 주세요.
-
-    [이전 달 데이터]: {state.get('report_data', '정보 없음')}
-    [주택 정보]: {state.get('house_info', '정보 없음')}
-    [정책 정보]: {state.get('policy_info', '정보 없음')}
-    [신용 정보]: {state.get('credit_info', '정보 없음')}
+    당신은 금융 정책 비교 분석가입니다. 아래 제공된 두 버전의 정책을 [장 제목] 기준으로 비교하십시오.
+    
+    [핵심 임무: 오직 변경점만 추출]
+    1. **두 정책의 모든 [장 제목]을 대조**하여, **신규 정책(20250305)에서 변경되거나 새롭게 추가된 내용**만을 간결하고 명확하게 요약하여 보고하십시오.
+    2. 변경이 없는 내용은 언급하지 않습니다.
+    3. 정책 파일 로드에 실패했다면 (내용에 '정책 파일 로드 실패' 포함) 해당 사실을 명시하고 분석을 중단하십시오.
+    
+    [정책 비교 데이터]
+    {old_policy_text}
+    
+    {new_policy_text}
+    
+    [이전 달 재무/환경 데이터 - 정책 영향 분석 참고용]
+    - 이전 달 보고서: {state.get('report_data')}
+    - 현재 주택 정보: {state.get('house_info')}
+    - 현재 신용 정보: {state.get('credit_info')}
     """
-
-    # compare 에이전트에서 사용된 방식(langchain_core/ollama_llm)을 requests 기반으로 통일합니다.
+    
+    # 🚨 Ollama 호출 로직 (타임아웃 180초로 설정)
+    response_content = "❌ LLM 호출 실패"
     payload = {
-        "model": "qwen3:8b", # 모델은 실제 사용하는 모델로 변경 필요 (예: llama3)
+        "model": QWEN_MODEL, 
         "prompt": f"[System] 너는 데이터 분석과 리포트 요약에 능숙한 한국어 어시스턴트야.\n\n[Human] {prompt}",
         "stream": False,
         "options": {"temperature": 0.3}
     }
     
-    response_content = "❌ LLM 호출 실패"
     try:
-        res = requests.post(f"{OLLAMA_HOST}/api/generate", json=payload, timeout=60)
+        res = requests.post(f"{OLLAMA_HOST}/api/generate", json=payload, timeout=180)
         res.raise_for_status() 
         response_content = res.json()['response'].strip()
         print("✅ [LLM Node] 변동 사항 비교 요약 완료")
