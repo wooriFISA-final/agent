@@ -4,13 +4,13 @@ from pydantic import BaseModel
 from agents.registry.agent_registry import AgentRegistry
 from graph.routing.router_base import RouterBase
 from agents.base.state import AgentState
-from agents.base.agent_base import AgentConfig
+from agents.config.base_config import BaseAgentConfig
 from mystatechema import MyStateSchema
 
 class GraphBuilder:
     """유연한 그래프 빌더"""
     
-    def __init__(self, state_schema: Union[Type[BaseModel], Type[TypedDict]]):
+    def __init__(self, state_schema: Union[Type[BaseModel], Type[Dict]]):
         self.graph = StateGraph(state_schema)
         self.nodes: Dict[str, Any] = {}
         self.edges: List[tuple] = []
@@ -24,7 +24,7 @@ class GraphBuilder:
     ):
         """Agent를 노드로 추가"""
         agent_class = AgentRegistry.get(agent_name)
-        agent_config = AgentConfig(name=node_name, **(config or {}))
+        agent_config = BaseAgentConfig(name=node_name, **(config or {}))
         agent_instance = agent_class(agent_config)
         
         self.graph.add_node(node_name, agent_instance.run)

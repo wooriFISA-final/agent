@@ -2,82 +2,123 @@ from abc import ABC, abstractmethod
 import asyncio
 from typing import Any, Dict, Optional
 from pydantic import BaseModel
+from agents.config.base_config import BaseAgentConfig
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 import logging
 
-class AgentConfig(BaseModel):
-    """Agent 설정"""
-    name: str
-    description: Optional[str] = None
-    max_retries: int = 3
-    timeout: int = 30
-    enabled: bool = True
-    dependencies: list[str] = []
-
+# -------------------------------
+# 로그 설정
+# -------------------------------
 logger = logging.getLogger(__name__)
 
+# -------------------------------
+# Agent 추상 베이스 클래스
+# -------------------------------
 class AgentBase(ABC):
-    """모든 Agent의 베이스 클래스"""
+    """
+    모든 Agent가 상속받는 공통 베이스 클래스
 
-    def __init__(self, config: AgentConfig):
+    특징:
+    - 입력 검증(validate_input)
+    - pre/post 처리(pre_execute/post_execute)
+    - 핵심 실행(execute) 재시도 및 타임아웃 처리
+    - 상태(state) dict 기반 관리
+    - 로깅 자동화
+    """
+
+    def __init__(self, config: BaseAgentConfig):
         self.config = config
         self.name = config.name
-        self._validate_config()
+        self._validate_config()  # 생성 시 기본 설정 검증
 
+    # -------------------------------
+    # 전체 실행 파이프라인
+    # -------------------------------
     async def run(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """전체 실행 파이프라인"""
+        """
+        Agent 실행 흐름:
+        1) 입력 검증(validate_input)
+        2) 실행 전 전처리(pre_execute)
+        3) 핵심 실행(execute) - 재시도 & 타임아웃 포함
+        4) 실행 후 후처리(post_execute)
+        5) 시작/종료 로깅
+        """
         self._log_start(state)
 
+        # 입력 데이터 검증
         if not self.validate_input(state):
             raise ValueError(f"Invalid input for {self.name}")
 
+        # 필요 시 실행 전 상태 전처리
         state = self.pre_execute(state)
 
+        # 핵심 실행 로직 실행 (재시도 + 타임아웃)
         for attempt in range(1, self.config.max_retries + 1):
             try:
                 async with asyncio.timeout(self.config.timeout):
                     result = await self.execute(state)
-                break
+                break  # 성공 시 재시도 루프 탈출
             except asyncio.TimeoutError:
+                # 타임아웃 발생 시 로깅 후 재시도
                 error_msg = f"Timeout after {self.config.timeout} seconds"
                 logger.warning(f"[{self.name}] attempt {attempt} failed: {error_msg}")
                 if attempt == self.config.max_retries:
                     raise TimeoutError(f"{self.name} execution timed out after {self.config.timeout} seconds")
-                await asyncio.sleep(1.5 * attempt)
+                await asyncio.sleep(1.5 * attempt)  # 지수적 백오프
             except Exception as e:
+                # 일반 예외 처리 및 재시도
                 error_msg = str(e) if str(e) else f"{type(e).__name__}"
                 logger.warning(f"[{self.name}] attempt {attempt} failed: {error_msg}")
                 if attempt == self.config.max_retries:
                     raise e
                 await asyncio.sleep(1.5 * attempt)
 
+        # 필요 시 실행 후 상태 후처리
         result = self.post_execute(result)
         self._log_end(result)
         return result
-    
+
+    # -------------------------------
+    # 핵심 실행 로직 (Agent별로 구현)
+    # -------------------------------
     @abstractmethod
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """실행 로직 (하위 클래스에서 구현)"""
+        """Agent 고유의 실제 실행 로직"""
         pass
-    
+
+    # -------------------------------
+    # 입력 검증 (Agent별로 구현)
+    # -------------------------------
     @abstractmethod
     def validate_input(self, state: Dict[str, Any]) -> bool:
-        """입력 검증"""
+        """state dict가 유효한지 검사"""
         pass
-    
+
+    # -------------------------------
+    # 선택적 전처리
+    # -------------------------------
     def pre_execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """실행 전 전처리 (선택적 오버라이드)"""
+        """실행 전 상태 전처리 (필요 시 오버라이드 가능)"""
         return state
-    
+
+    # -------------------------------
+    # 선택적 후처리
+    # -------------------------------
     def post_execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """실행 후 후처리 (선택적 오버라이드)"""
+        """실행 후 상태 후처리 (필요 시 오버라이드 가능)"""
         return state
-    
+
+    # -------------------------------
+    # 설정 검증
+    # -------------------------------
     def _validate_config(self):
-        """설정 검증"""
+        """AgentConfig 기본 필수 값 검증"""
         if not self.config.name:
             raise ValueError("Agent name is required")
 
+    # -------------------------------
+    # 실행 로깅
+    # -------------------------------
     def _log_start(self, state):
         logger.info(f"[{self.name}] Starting with input keys: {list(state.keys())}")
 

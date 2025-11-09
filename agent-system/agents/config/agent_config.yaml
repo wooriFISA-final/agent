@@ -1,0 +1,289 @@
+
+# =============================================================================
+# Agent Configuration File
+# Agent별 개별 설정을 정의합니다
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 기본 Agent 설정
+# -----------------------------------------------------------------------------
+default:
+  timeout: 30
+  max_retries: 3
+  enabled: true
+  log_level: INFO
+
+# -----------------------------------------------------------------------------
+# Research Agents
+# -----------------------------------------------------------------------------
+research:
+  name: "research"
+  description: "기본 리서치 Agent"
+  timeout: 60
+  max_retries: 5
+  enabled: true
+  dependencies: []
+  priority: 1
+  
+llm_research:
+  name: "llm_research"
+  description: "LLM 기반 리서치 Agent"
+  timeout: 120  # LLM 호출은 더 오래 걸림
+  max_retries: 3
+  enabled: true
+  dependencies: []
+  priority: 1
+  # LLM 관련 설정
+  llm:
+    temperature: 0.7
+    max_tokens: 4096
+    system_prompt: |
+      당신은 전문 리서처입니다.
+      주어진 주제에 대해 깊이 있는 분석과 통찰을 제공합니다.
+
+# -----------------------------------------------------------------------------
+# Analysis Agents
+# -----------------------------------------------------------------------------
+analysis:
+  name: "analysis"
+  description: "기본 분석 Agent"
+  timeout: 45
+  max_retries: 3
+  enabled: true
+  dependencies:
+    - research
+  priority: 2
+
+llm_analysis:
+  name: "llm_analysis"
+  description: "LLM 기반 분석 Agent"
+  timeout: 90
+  max_retries: 3
+  enabled: true
+  dependencies:
+    - llm_research
+  priority: 2
+  llm:
+    temperature: 0.5
+    max_tokens: 3000
+    system_prompt: |
+      당신은 데이터 분석 전문가입니다.
+      주어진 정보를 분석하여 핵심 인사이트를 추출합니다.
+
+# -----------------------------------------------------------------------------
+# Writer Agents
+# -----------------------------------------------------------------------------
+writer:
+  name: "writer"
+  description: "기본 작성 Agent"
+  timeout: 60
+  max_retries: 2
+  enabled: true
+  dependencies:
+    - analysis
+  priority: 3
+
+llm_writer:
+  name: "llm_writer"
+  description: "LLM 기반 작성 Agent"
+  timeout: 120
+  max_retries: 2
+  enabled: true
+  dependencies:
+    - llm_analysis
+  priority: 3
+  llm:
+    temperature: 0.6
+    max_tokens: 5000
+    system_prompt: |
+      당신은 전문 기술 문서 작성자입니다.
+      명확하고 구조화된 보고서를 작성합니다.
+
+# -----------------------------------------------------------------------------
+# Validator Agents
+# -----------------------------------------------------------------------------
+validator:
+  name: "validator"
+  description: "데이터 검증 Agent"
+  timeout: 20
+  max_retries: 1
+  enabled: true
+  dependencies: []
+  priority: 0
+  validation:
+    strict_mode: true
+    required_fields:
+      - query
+      - result
+    max_field_length: 10000
+
+# -----------------------------------------------------------------------------
+# Router Agents
+# -----------------------------------------------------------------------------
+router:
+  name: "router"
+  description: "라우팅 결정 Agent"
+  timeout: 15
+  max_retries: 1
+  enabled: true
+  dependencies: []
+  priority: 0
+  routing:
+    default_route: "standard"
+    fallback_route: "error_handler"
+
+# -----------------------------------------------------------------------------
+# Error Handler Agent
+# -----------------------------------------------------------------------------
+error_handler:
+  name: "error_handler"
+  description: "에러 처리 Agent"
+  timeout: 30
+  max_retries: 1
+  enabled: true
+  dependencies: []
+  priority: 99
+  error_handling:
+    max_retry_attempts: 3
+    exponential_backoff: true
+    notify_on_failure: true
+    fallback_response: "처리 중 오류가 발생했습니다."
+
+# -----------------------------------------------------------------------------
+# Input Processing Agent
+# -----------------------------------------------------------------------------
+input_processor:
+  name: "input_processor"
+  description: "입력 전처리 Agent"
+  timeout: 20
+  max_retries: 2
+  enabled: true
+  dependencies: []
+  priority: 0
+  preprocessing:
+    trim_whitespace: true
+    lowercase: false
+    remove_special_chars: false
+    max_length: 5000
+
+# -----------------------------------------------------------------------------
+# Output Formatter Agent
+# -----------------------------------------------------------------------------
+output_formatter:
+  name: "output_formatter"
+  description: "출력 포맷팅 Agent"
+  timeout: 15
+  max_retries: 1
+  enabled: true
+  dependencies: []
+  priority: 98
+  formatting:
+    format: "markdown"  # markdown, json, plain
+    include_metadata: true
+    include_timestamp: true
+
+# -----------------------------------------------------------------------------
+# Cache Agent
+# -----------------------------------------------------------------------------
+cache_manager:
+  name: "cache_manager"
+  description: "캐시 관리 Agent"
+  timeout: 10
+  max_retries: 1
+  enabled: true
+  dependencies: []
+  priority: 0
+  cache:
+    ttl: 3600  # 1 hour
+    max_size: 1000
+    strategy: "lru"  # lru, fifo, lfu
+
+# -----------------------------------------------------------------------------
+# Monitoring Agent
+# -----------------------------------------------------------------------------
+monitor:
+  name: "monitor"
+  description: "모니터링 Agent"
+  timeout: 5
+  max_retries: 1
+  enabled: true
+  dependencies: []
+  priority: 100
+  monitoring:
+    collect_metrics: true
+    log_performance: true
+    alert_threshold: 0.9
+    track_errors: true
+
+# -----------------------------------------------------------------------------
+# Database Agent
+# -----------------------------------------------------------------------------
+database:
+  name: "database"
+  description: "데이터베이스 작업 Agent"
+  timeout: 60
+  max_retries: 3
+  enabled: false  # 기본적으로 비활성화
+  dependencies: []
+  priority: 1
+  database:
+    connection_pool_size: 5
+    query_timeout: 30
+    auto_commit: false
+    isolation_level: "READ_COMMITTED"
+
+# -----------------------------------------------------------------------------
+# API Client Agent
+# -----------------------------------------------------------------------------
+api_client:
+  name: "api_client"
+  description: "외부 API 호출 Agent"
+  timeout: 45
+  max_retries: 5
+  enabled: true
+  dependencies: []
+  priority: 1
+  api:
+    base_url: ""
+    timeout: 30
+    retry_on_status: [408, 429, 500, 502, 503, 504]
+    max_redirects: 5
+    verify_ssl: true
+
+# -----------------------------------------------------------------------------
+# Workflow Orchestrator
+# -----------------------------------------------------------------------------
+orchestrator:
+  name: "orchestrator"
+  description: "워크플로우 조율 Agent"
+  timeout: 300
+  max_retries: 1
+  enabled: true
+  dependencies: []
+  priority: 0
+  orchestration:
+    max_concurrent_tasks: 5
+    task_timeout: 120
+    retry_failed_tasks: true
+    continue_on_error: false
+
+# -----------------------------------------------------------------------------
+# Notification Agent
+# -----------------------------------------------------------------------------
+notifier:
+  name: "notifier"
+  description: "알림 전송 Agent"
+  timeout: 20
+  max_retries: 3
+  enabled: false
+  dependencies: []
+  priority: 99
+  notification:
+    channels:
+      - email
+      - slack
+    on_events:
+      - workflow_complete
+      - workflow_failed
+      - error_occurred
+

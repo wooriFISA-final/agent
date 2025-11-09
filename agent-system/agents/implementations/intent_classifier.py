@@ -3,7 +3,8 @@ import json
 import re
 from typing import Dict, Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from agents.base.agent_base import AgentBase, AgentConfig
+from agents.base.agent_base import AgentBase
+from agents.base.agent_base import BaseAgentConfig
 from agents.registry.agent_registry import AgentRegistry
 from core.llm.llm_manger import LLMManager
 
@@ -17,6 +18,7 @@ def remove_think_tags(text: str) -> str:
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     return text.strip()
 
+# agents/implementations/analysis_agent.py
 
 @AgentRegistry.register("intent_classifier")
 class IntentClassifierAgent(AgentBase):
@@ -30,9 +32,11 @@ class IntentClassifierAgent(AgentBase):
         - intent_result: str
     """
     
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: BaseAgentConfig):
         super().__init__(config)
-        self.llm = None
+        # config 기반으로 LLM 설정
+        self.llm = LLMManager.get_llm(provider=getattr(config, "provider", "ollama"),
+                                      model=config.model_name)
     
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """의도 분류 실행"""
