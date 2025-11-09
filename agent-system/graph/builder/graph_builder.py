@@ -7,6 +7,7 @@ from agents.base.state import AgentState
 from agents.config.base_config import BaseAgentConfig
 from mystatechema import MyStateSchema
 
+from langgraph.checkpoint.memory import MemorySaver 
 class GraphBuilder:
     """유연한 그래프 빌더"""
     
@@ -68,7 +69,8 @@ class GraphBuilder:
     
     def build(self):
         """그래프 컴파일"""
-        return self.graph.compile()
+        # 메모리 관리 필요
+        return self.graph.compile(checkpointer=MemorySaver())
     
     def visualize(self, output_path: str = "graph.png"):
         """그래프 시각화"""

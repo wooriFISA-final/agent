@@ -78,15 +78,29 @@ class IntentClassifierAgent(AgentBase):
             logger.info(f"   Full result:\n{intent_result}")
             
             # 상태 업데이트
-            state["intent_result"] = intent_result
-            
-            return state
+            return {
+                "intent_result": intent_result,
+                "messages": f"[Intent: {intent_result}]"
+            }
             
         except Exception as e:
             logger.error(f"❌ [{self.name}] Intent classification failed: {e}")
-            state["intent_result"] = f"의도 분류 중 오류가 발생했습니다: {str(e)}"
-            return state
-    
+            error_message = f"의도 분류 중 오류가 발생했습니다: {str(e)}"
+            return {
+                "intent_result": error_message,
+                "messages": error_message
+            }
+        #         # 상태 업데이트
+        #     state["intent_result"] = intent_result
+        #     return {
+        #             "messages": f"[Intent: {intent_result}]"
+        #         }    
+        #     # return state
+            
+        # except Exception as e:
+        #     logger.error(f"❌ [{self.name}] Intent classification failed: {e}")
+        #     state["intent_result"] = f"의도 분류 중 오류가 발생했습니다: {str(e)}"
+        #     return state    
     def validate_input(self, state: Dict[str, Any]) -> bool:
         """
         입력 검증

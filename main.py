@@ -33,6 +33,7 @@ async def chat_endpoint(request: ChatRequest):
     result = await graph.ainvoke({"messages": [HumanMessage(content=request.message)]}, config=config)
 
     messages = result.get("messages", [])
+    print(f"messages : {messages}")
     if not messages:
         return ChatResponse(response="응답을 생성할 수 없습니다.")
     return ChatResponse(response=messages[-1].content)
