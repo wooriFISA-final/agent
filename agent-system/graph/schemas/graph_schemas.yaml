@@ -1,0 +1,54 @@
+# 예시: 복잡한 워크플로우
+name: "complex_research_workflow"
+version: "1.0"
+
+state_schema:
+  query: str
+  results: list
+  confidence: float
+  iteration: int
+
+nodes:
+  - name: "query_analyzer"
+    agent: "QueryAnalysisAgent"
+    config:
+      max_retries: 3
+      timeout: 30
+  
+  - name: "web_researcher"
+    agent: "WebResearchAgent"
+    config:
+      max_results: 10
+  
+  - name: "validator"
+    agent: "ValidationAgent"
+  
+  - name: "writer"
+    agent: "WriterAgent"
+
+edges:
+  - from: "query_analyzer"
+    to: "web_researcher"
+
+conditional_edges:
+  - from: "web_researcher"
+    router: "ConditionalRouter"
+    router_config:
+      condition_key: "confidence"
+    paths:
+      high: "writer"
+      low: "query_analyzer"  # 재시도
+      medium: "validator"
+  
+  - from: "validator"
+    router: "ValidationRouter"
+    paths:
+      approved: "writer"
+      rejected: "web_researcher"
+
+entry_point: "query_analyzer"
+finish_point: "writer"
+
+settings:
+  max_iterations: 5
+  timeout: 300
