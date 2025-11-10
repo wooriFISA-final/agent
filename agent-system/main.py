@@ -15,7 +15,7 @@ from agents.registry.agent_registry import AgentRegistry
 from graph.builder.graph_builder import GraphBuilder
 from core.llm.llm_manger import LLMManager
 from core.logging.logger import setup_logger
-
+from graph.factory import mk_graph
 # ----------------------------
 # 기본 설정
 # ----------------------------
@@ -28,43 +28,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ----------------------------
-# 상태 스키마 정의
-# ----------------------------
-from typing import TypedDict, Optional
-
-class LLMStateSchema(TypedDict, total=False):
-    query: str
-    research_result: Optional[str]
-    analysis_result: Optional[str]
-    final_report: Optional[str]
-    intent_result: Optional[str]
-    messages: Optional[str]
-
+logger = setup_logger()
 
 # ----------------------------
 # 그래프 초기화
 # ----------------------------
-logger = setup_logger()
-logger.info("🚀 Initializing LLM Graph...")
-
-AgentRegistry.auto_discover("agents.implementations")
-registered_agents = AgentRegistry.list_agents()
-logger.info(f"✅ Registered agents: {registered_agents}")
-
-builder = GraphBuilder(LLMStateSchema)
-llm_agent_config = {"timeout": 120, "max_retries": 2}
-
-if "intent_classifier" in registered_agents:
-    builder.add_agent_node("intent", "intent_classifier", config=llm_agent_config)
-    builder.set_entry_point("intent")
-    builder.set_finish_point("intent")
-    graph = builder.build()
-    logger.info("✅ Graph successfully built and ready to use.")
-else:
-    logger.error("❌ Required agent 'intent_classifier' not found. Please add it.")
-    graph = None
+graph = mk_graph("graph.yaml")
 
 
 # ----------------------------

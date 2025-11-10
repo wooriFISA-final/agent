@@ -71,10 +71,6 @@ class LLMManager:
             filtered_kwargs = {k: v for k, v in kwargs.items() 
                              if k not in ["provider", "model", "temperature"]}
             return cls._create_ollama(model, temperature, **filtered_kwargs)
-        # elif provider.lower() == "anthropic":
-        #     return cls._create_anthropic(model, temperature, **kwargs)
-        # elif provider.lower() == "openai":
-        #     return cls._create_openai(model, temperature, **kwargs)
         else:
             raise ValueError(f"Unsupported LLM provider: {provider}")
     
@@ -104,56 +100,6 @@ class LLMManager:
         
         logger.info(f"✅ Ollama LLM created: {model} at {base_url}")
         return llm
-    
-    # @classmethod
-    # def _create_anthropic(
-    #     cls,
-    #     model: str,
-    #     temperature: float,
-    #     **kwargs
-    # ) -> ChatAnthropic:
-    #     """Anthropic Claude LLM 생성"""
-    #     config = Settings.get_config()
-    #     api_key = kwargs.get("api_key") or config.llm_api_key
-        
-    #     if not api_key:
-    #         raise ValueError("Anthropic API key is required")
-        
-    #     llm = ChatAnthropic(
-    #         model=model,
-    #         temperature=temperature,
-    #         api_key=api_key,
-    #         **{k: v for k, v in kwargs.items() 
-    #            if k not in ["provider", "model", "temperature", "api_key"]}
-    #     )
-        
-    #     logger.info(f"✅ Anthropic LLM created: {model}")
-    #     return llm
-    
-    # @classmethod
-    # def _create_openai(
-    #     cls,
-    #     model: str,
-    #     temperature: float,
-    #     **kwargs
-    # ) -> ChatOpenAI:
-    #     """OpenAI GPT LLM 생성"""
-    #     config = Settings.get_config()
-    #     api_key = kwargs.get("api_key") or config.llm_api_key
-        
-    #     if not api_key:
-    #         raise ValueError("OpenAI API key is required")
-        
-    #     llm = ChatOpenAI(
-    #         model=model,
-    #         temperature=temperature,
-    #         api_key=api_key,
-    #         **{k: v for k, v in kwargs.items() 
-    #            if k not in ["provider", "model", "temperature", "api_key"]}
-    #     )
-        
-    #     logger.info(f"✅ OpenAI LLM created: {model}")
-    #     return llm
     
     @classmethod
     def reset(cls):

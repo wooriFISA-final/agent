@@ -4,8 +4,9 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel
 from agents.config.base_config import BaseAgentConfig
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from agents.base.messages import ThinkMessage, ResultMessage
 import logging
-
+import re
 # -------------------------------
 # 로그 설정
 # -------------------------------
@@ -52,6 +53,8 @@ class AgentBase(ABC):
         # 필요 시 실행 전 상태 전처리
         state = self.pre_execute(state)
 
+        
+        ## ** 제거 가능성 있는 코드** ## 
         # 핵심 실행 로직 실행 (재시도 + 타임아웃)
         for attempt in range(1, self.config.max_retries + 1):
             try:
@@ -83,8 +86,28 @@ class AgentBase(ABC):
     # -------------------------------
     @abstractmethod
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Agent 고유의 실제 실행 로직"""
-        pass
+        """
+        기본 실행 구조 (사용자 메시지 기반)
+        - HumanMessage 읽기
+        - LLM 호출
+        - post_execute에서 Think/Result 분류
+        """
+        messages = state.get("messages", [])
+        user_message = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
+        if not user_message:
+            raise ValueError("No HumanMessage found in state")
+
+        system_prompt = SystemMessage(content="당신은 에이전트입니다.")
+        llm_messages = [system_prompt, user_message]
+
+        # LLM 호출
+        response = await self.llm.ainvoke(llm_messages)
+
+        # LLM raw content만 상태에 저장, 메시지 분류는 post_execute에서 처리
+        state["last_llm_response"] = response.content
+        return {"messages": messages, 
+                "raw_response": response.content}
+
 
     # -------------------------------
     # 입력 검증 (Agent별로 구현)
@@ -105,7 +128,18 @@ class AgentBase(ABC):
     # 선택적 후처리
     # -------------------------------
     def post_execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """실행 후 상태 후처리 (필요 시 오버라이드 가능)"""
+        """
+        LLM 응답 후처리
+        - <think> 태그 분리
+        - ThinkMessage / ResultMessage 생성
+        """
+        raw_content = state.get("last_llm_response", "")
+        think_messages = [ThinkMessage(content=m) for m in re.findall(r"<think>(.*?)</think>", raw_content, flags=re.DOTALL)]
+        cleaned_content = re.sub(r"<think>.*?</think>", "", raw_content, flags=re.DOTALL).strip()
+        result_message = ResultMessage(content=cleaned_content)
+
+        state["messages"].extend(think_messages + [result_message])
+        state["last_result"] = cleaned_content
         return state
 
     # -------------------------------

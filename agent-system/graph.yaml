@@ -1,0 +1,11 @@
+entry_point: intent
+finish_point: intent
+
+nodes:
+  - name: intent
+    agent: intent_classifier
+    config:
+      timeout: 120
+      max_retries: 2
+
+edges: []

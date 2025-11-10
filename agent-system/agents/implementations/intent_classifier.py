@@ -44,10 +44,6 @@ class IntentClassifierAgent(AgentBase):
         
         logger.info(f"🔍 [{self.name}] Classifying intent: '{query}'")
         
-        # LLM 인스턴스 가져오기
-        if self.llm is None:
-            self.llm = LLMManager.get_llm(provider="ollama", model="qwen3:8b")
-        
         # 의도 분류 프롬프트 생성
         system_prompt = """당신은 사용자의 입력을 분석하여 의도를 분류하는 AI입니다.
 다음 중 하나로 분류하세요:
