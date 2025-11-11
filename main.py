@@ -19,6 +19,8 @@ app.add_middleware(
 # 그래프 초기화
 graph = create_graph()
 
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default-session"
@@ -26,6 +28,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
 
+# 예도 변경해야 할듯
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     """Front → AI Graph → Output"""
