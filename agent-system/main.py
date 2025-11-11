@@ -1,9 +1,3 @@
-"""
-api_server.py
-Front ↔ Agent System FastAPI API Server
-- main.py는 개발용, api_server는 프론트 통신용
-"""
-
 import asyncio
 import logging
 from fastapi import FastAPI
@@ -16,41 +10,31 @@ from graph.builder.graph_builder import GraphBuilder
 from core.llm.llm_manger import LLMManager
 from core.logging.logger import setup_logger
 from graph.factory import mk_graph
-# ----------------------------
-# 기본 설정
-# ----------------------------
-app = FastAPI(title="Agent System API")
 
+logger = setup_logger()
+app = FastAPI(title="Multi-Agent Planner")
+
+# CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 실제 서비스에서는 특정 도메인으로 제한하는 게 좋아
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-logger = setup_logger()
 
-# ----------------------------
 # 그래프 초기화
-# ----------------------------
-graph = mk_graph("graph.yaml")
+# graph = create_graph()
+graph = mk_graph("graph.yaml")  # UserRegistrationAgent 포함되어 있어야 함
 
-
-# ----------------------------
-# Request/Response 모델
-# ----------------------------
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default-session"
 
-
 class ChatResponse(BaseModel):
     response: str
 
-
-# ----------------------------
-# Chat API Endpoint
-# ----------------------------
+#예도 변경해야 할듯
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     """Front → LLM Graph → Response"""
@@ -63,8 +47,12 @@ async def chat_endpoint(request: ChatRequest):
     #     "query": "계획을 수정하고 싶어"
     # }
     try:
-        result = await graph.ainvoke({"query": request.message}, config=config)
-        print(result)
+        logger.info(f"유저 메시지 request : {request.message}")
+        messages = [HumanMessage(content=request.message)]
+        result = await graph.ainvoke(
+            {"messages": messages},
+            config=config
+        )
         # result = await graph.ainvoke({"messages": [HumanMessage(content=request.message)]}, config=config)
 
         final_response = result.get("messages")
@@ -81,15 +69,9 @@ async def chat_endpoint(request: ChatRequest):
     except Exception as e:
         logger.error(f"❌ Chat processing failed: {e}")
         return ChatResponse(response=f"오류가 발생했습니다: {e}")
-
-
-# ----------------------------
-# 헬스체크 엔드포인트
-# ----------------------------
 @app.get("/")
 async def root():
     return {"status": "ok", "message": "AI Agent API is running 🚀"}
-
 
 # ----------------------------
 # 서버 직접 실행용 (선택)
@@ -97,5 +79,5 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
 
-    logger.info("🚀 Starting API Server on http://localhost:8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    logger.info("🚀 Starting API Server on http://localhost:8080")
+    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True)

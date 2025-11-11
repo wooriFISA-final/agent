@@ -1,9 +1,9 @@
-entry_point: intent
-finish_point: intent
+entry_point: user_regri
+finish_point: user_regri
 
 nodes:
-  - name: intent
-    agent: intent_classifier
+  - name: user_regri
+    agent: user_registration
     config:
       timeout: 120
       max_retries: 2

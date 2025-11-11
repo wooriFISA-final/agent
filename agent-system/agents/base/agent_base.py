@@ -75,9 +75,9 @@ class AgentBase(ABC):
                 if attempt == self.config.max_retries:
                     raise e
                 await asyncio.sleep(1.5 * attempt)
-
+        
         # 필요 시 실행 후 상태 후처리
-        result = self.post_execute(result)
+        # result = self.post_execute(result)
         self._log_end(result)
         return result
 

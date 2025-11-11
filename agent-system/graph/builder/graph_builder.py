@@ -6,6 +6,7 @@ from graph.routing.router_base import RouterBase
 from agents.base.state import AgentState
 from agents.config.base_config import BaseAgentConfig
 from mystatechema import MyStateSchema
+from mcp_host.mcp_client import MCPHTTPClient
 
 from langgraph.checkpoint.memory import MemorySaver 
 class GraphBuilder:
@@ -23,9 +24,11 @@ class GraphBuilder:
         agent_name: str,
         config: Optional[Dict] = None
     ):
+        BASE_URL = "http://localhost:8000/mcp"
         """Agent를 노드로 추가"""
         agent_class = AgentRegistry.get(agent_name)
         agent_config = BaseAgentConfig(name=node_name, **(config or {}))
+        agent_config.client = MCPHTTPClient(base_url=BASE_URL)
         agent_instance = agent_class(agent_config)
         
         self.graph.add_node(node_name, agent_instance.run)

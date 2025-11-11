@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import List, Optional
-
+from mcp_host.mcp_client import MCPHTTPClient
 class BaseAgentConfig(BaseModel):
     """모든 Agent 공통 설정"""
     """Agent 설정 정보를 담는 모델"""
@@ -11,3 +11,7 @@ class BaseAgentConfig(BaseModel):
     timeout: int = 30                     # 실행 타임아웃(초)
     enabled: bool = True                  # Agent 활성화 여부
     dependencies: List[str] = []          # 다른 Agent 의존성 목록
+    client: Optional[MCPHTTPClient] = None  # 선택적 필드로 변경
+    
+    # ✅ arbitrary 타입 허용 -> 제거 예정(임시)
+    model_config = dict(arbitrary_types_allowed=True)

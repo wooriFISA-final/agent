@@ -12,6 +12,7 @@ async def test_mcp_client():
     logger.info("🚀 FastMCP 클라이언트 테스트를 시작합니다...")
     
     try:
+        logger.info("\n  MCPHTTPClient async Go")    
         async with MCPHTTPClient(base_url="http://localhost:8000/mcp") as client:
             
             # 1. Tool 테스트: create_user
