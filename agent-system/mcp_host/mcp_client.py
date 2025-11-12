@@ -1,153 +1,132 @@
-# mcp_host/mcp_client.py
-import logging
-from typing import Dict, Any
 from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
+import uuid
+import json
+import asyncio
+import requests
+from typing import Any, Dict, List
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+# === MCP 클라이언트 객체 정의 ===
+transport = StreamableHttpTransport(
+    url="http://localhost:8888/mcp/"
+    #headers={"X-Account-Password": "1234"}
+)
+mcp_client = Client(transport)
 
-class MCPHTTPClient:
-    """FastMCP (Streamable-HTTP) 기반 MCP 클라이언트"""
-    
-    def __init__(self, base_url: str = "http://localhost:8000/mcp", transport: str = 'http'):
-        self.base_url = base_url
-        self.transport = transport
-        self.client: Client = Client(self.base_url, self.transport)
+# === MCP에서 도구 스펙 받아와서 Function calling 포맷으로 변환 ===
+async def load_tools(client: Client) -> List[Dict[str, Any]]:
+    tools = await client.list_tools()
+    tools_spec = []
+    for tool in tools:
+        schema = tool.inputSchema or {}
+        props = schema.get("properties", {})
+        if not props:
+            continue
+        tools_spec.append({
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description or "",
+                "parameters": {
+                    "type": schema.get("type", "object"),
+                    "properties": {
+                        k: {
+                            "type": p.get("type", "string"),
+                            "description": p.get("description", "")
+                        } for k, p in props.items()
+                    },
+                    "required": schema.get("required", [])
+                },
+            },
+        })
+    return tools_spec
 
-    async def __aenter__(self):
-        await self.client.__aenter__()
-        logger.info(f"🔗 Connected to FastMCP server at {self.base_url}")
-        return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.client.__aexit__(exc_type, exc_val, exc_tb)
-        logger.info("🔌 Disconnected from FastMCP server")
+# === MCP 도구 실행 ===
+async def call_mcp_tool(client: Client, name: str, args: Dict[str, Any]) -> Any:
+    return await client.call_tool(name, args)
 
-    async def call_tool(self, tool_name: str, params: Dict[str, Any]) -> Any:
-        """MCP 서버의 tool 호출"""
-        if not self.client.is_connected:
-            raise RuntimeError("MCPHTTPClient not connected. Use 'async with'.")
-        
-        try:
-            logger.info(f"🔧 Calling tool: {tool_name}")
-            logger.debug(f"Parameters: {params}")
-            
-            # ✅ FastMCP Client의 call_tool 메서드 사용
-            result = await self.client.call_tool(
-                name=tool_name, 
-                arguments=params)
-            
-            # ✅ CallToolResult 객체에서 content 추출
-            if hasattr(result, 'content') and result.content:
-                # content는 리스트이고, 각 항목은 TextContent 또는 ImageContent
-                if isinstance(result.content, list) and len(result.content) > 0:
-                    import json
-                    content_item = result.content[0]
-                    
-                    # TextContent의 경우 text 속성 접근
-                    if hasattr(content_item, 'text'):
-                        try:
-                            # JSON 문자열을 파싱
-                            return json.loads(content_item.text)
-                        except json.JSONDecodeError:
-                            # JSON이 아니면 텍스트 그대로 반환
-                            return content_item.text
-            
-            return {"success": False, "error": "Invalid response format"}
-            
-        except Exception as e:
-            logger.error(f"❌ Tool call failed for '{tool_name}': {e}", exc_info=True)
-            raise
+# # === 모델 호출 ===
+# def call_llm(messages: List[Dict[str, Any]], tools_spec=None, tool_choice=None) -> Dict[str, Any]:
+#     data = {"messages": messages, "maxTokens": 1024, "seed": 0}
+#     if tools_spec:
+#         data["tools"] = tools_spec
+#     if tool_choice:
+#         data["toolChoice"] = tool_choice
+#     headers = MODEL_HEADERS | {"X-NCP-CLOVASTUDIO-REQUEST-ID": str(uuid.uuid4())}
+#     resp = requests.post(MODEL_URL, headers=headers, json=data)
+#     resp.raise_for_status()
+#     return resp.json()
 
-    async def get_resource(self, resource_uri: str) -> Any:
-        """MCP 서버의 resource 조회"""
-        if not self.client.is_connected:
-            raise RuntimeError("MCPHTTPClient not connected. Use 'async with'.")
-        
-        try:
-            logger.info(f"📦 Getting resource: {resource_uri}")
-            
-            # ✅ FastMCP Client의 read_resource 메서드 사용
-            result = await self.client.read_resource(resource_uri)
-            
-            # ✅ ReadResourceResult 파싱
-            if hasattr(result, 'contents') and result.contents:
-                if isinstance(result.contents, list) and len(result.contents) > 0:
-                    content_item = result.contents[0]
-                    
-                    # TextResourceContents의 경우
-                    if hasattr(content_item, 'text'):
-                        return content_item.text
-                    # BlobResourceContents의 경우
-                    elif hasattr(content_item, 'blob'):
-                        return content_item.blob
-            
-            return "No content available"
-            
-        except Exception as e:
-            logger.error(f"❌ Resource get failed for '{resource_uri}': {e}", exc_info=True)
-            raise
+# === main loop ===
+# async def main():
+#     async with mcp_client as client:
+#         tools_spec = await load_tools(client)
+#         system_prompt = {
+#             "role": "system",
+#             "content": (
+#                 "당신은 사용자 주식 거래를 돕는 AI 어시스턴트입니다. "
+#                 "매수·매도, 잔고 조회, 거래 내역 조회, 주가 조회를 처리하고 결과를 수치로 명확히 안내하세요. "
+#                 "잔고·수량 부족 등 거래가 불가능하면 이유를 숫자와 함께 설명하세요."
+#             ),
+#         }
 
-    async def call_prompt(self, prompt_name: str, params: Dict[str, Any]) -> Any:
-        """MCP 서버의 prompt 호출"""
-        if not self.client.is_connected:
-            raise RuntimeError("MCPHTTPClient not connected. Use 'async with'.")
-        
-        try:
-            logger.info(f"💬 Calling prompt: {prompt_name}")
-            logger.debug(f"Parameters: {params}")
-            
-            # ✅ FastMCP Client의 get_prompt 메서드 사용
-            result = await self.client.get_prompt(
-                name=prompt_name, 
-                arguments=params)
-            
-            # ✅ GetPromptResult 파싱
-            if hasattr(result, 'messages') and result.messages:
-                # 메시지 내용 추출
-                messages = []
-                for msg in result.messages:
-                    if hasattr(msg, 'content'):
-                        # content가 문자열인 경우
-                        if isinstance(msg.content, str):
-                            messages.append(msg.content)
-                        # content가 리스트인 경우 (TextContent 객체들)
-                        elif isinstance(msg.content, list):
-                            for content_item in msg.content:
-                                if hasattr(content_item, 'text'):
-                                    messages.append(content_item.text)
-                
-                return "\n".join(messages) if messages else "No prompt content"
-            
-            return "No prompt content available"
-            
-        except Exception as e:
-            logger.error(f"❌ Prompt call failed for '{prompt_name}': {e}", exc_info=True)
-            raise
+#         while True:
+#             user_input = input("\n사용자 요청을 입력하세요: ")
+#             if user_input.lower() in {"exit", "quit", "종료"}:
+#                 print("\n대화를 종료합니다.")
+#                 break
 
-    async def list_tools(self) -> list:
-        """사용 가능한 도구 목록 조회"""
-        try:
-            tools = await self.client.list_tools()
-            return tools.tools if hasattr(tools, 'tools') else []
-        except Exception as e:
-            logger.error(f"❌ Failed to list tools: {e}", exc_info=True)
-            raise
+#             user_msg = {"role": "user", "content": user_input}
+#             first_resp = call_llm([system_prompt, user_msg], tools_spec=tools_spec, tool_choice="auto")
+#             if first_resp.get("status", {}).get("code") != "20000":
+#                 print("\nLLM 호출 실패:", first_resp.get("status"))
+#                 continue
 
-    async def list_resources(self) -> list:
-        """사용 가능한 리소스 목록 조회"""
-        try:
-            resources = await self.client.list_resources()
-            return resources.resources if hasattr(resources, 'resources') else []
-        except Exception as e:
-            logger.error(f"❌ Failed to list resources: {e}", exc_info=True)
-            raise
+#             assistant_msg = first_resp["result"]["message"]
+#             tool_calls = assistant_msg.get("toolCalls", [])
 
-    async def list_prompts(self) -> list:
-        """사용 가능한 프롬프트 목록 조회"""
-        try:
-            prompts = await self.client.list_prompts()
-            return prompts.prompts if hasattr(prompts, 'prompts') else []
-        except Exception as e:
-            logger.error(f"❌ Failed to list prompts: {e}", exc_info=True)
-            raise
+#             if not tool_calls:
+#                 print("\n모델 답변:", assistant_msg.get("content", ""))
+#                 continue
+
+#             tool_call = tool_calls[0]
+#             func_name = tool_call["function"]["name"]
+#             func_args = tool_call["function"]["arguments"]
+#             call_id = tool_call["id"]
+
+#             try:
+#                 tool_result = await call_mcp_tool(client, func_name, func_args)
+#             except Exception as err:
+#                 print("\nMCP 도구 실행 실패:", err)
+#                 continue
+
+
+#             tool_response_prompt = {
+#                 "role": "system",
+#                 "content": (
+#                     "아래 tool 결과를 기반으로 간결하게 최종 답변을 작성하세요. "
+#                     "'available_cash'는 현재 남은 현금 잔고, 'portfolio'는 종목별 보유 수량과 평균 단가입니다. "
+#                     "수치는 단위와 함께 명확하게 표현하세요. (예: 3주, 1,000원)\n"
+#                     "금액 해석 시 숫자의 자릿수를 기준으로 정확히 구분하세요."
+#                 ),
+#             }
+
+#             second_resp = call_llm(
+#                 [
+#                     tool_response_prompt,
+#                     user_msg,
+#                     {"role": "assistant", "content": "", "toolCalls": [tool_call]},
+#                     {
+#                         "role": "tool",
+#                         "toolCallId": call_id,
+#                         "name": func_name,
+#                         "content": json.dumps(tool_result.structured_content, ensure_ascii=False),
+#                     },
+#                 ]
+#             )
+
+#             if second_resp.get("status", {}).get("code") == "20000":
+#                 print("\n모델 답변:", second_resp["result"]["message"]["content"])
+#             else:
+#                 print("\nLLM 호출 실패:", second_resp.get("status"))

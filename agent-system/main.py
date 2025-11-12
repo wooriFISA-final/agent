@@ -5,11 +5,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 
+from graph.schemas.state import LLMStateSchema
 from agents.registry.agent_registry import AgentRegistry
 from graph.builder.graph_builder import GraphBuilder
 from core.llm.llm_manger import LLMManager
 from core.logging.logger import setup_logger
 from graph.factory import mk_graph
+
+from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
 
 logger = setup_logger()
 app = FastAPI(title="Multi-Agent Planner")
@@ -22,10 +26,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# === MCP 클라이언트 객체 정의 추후에 다른 코드 파일에 옮길 예정===
+transport = StreamableHttpTransport(
+    url="http://localhost:8888/mcp/"
+    #headers={"X-Account-Password": "1234"}
+)
+mcp_client = Client(transport)
+
 
 # 그래프 초기화
 # graph = create_graph()
-graph = mk_graph("graph.yaml")  # UserRegistrationAgent 포함되어 있어야 함
+# graph = mk_graph("graph.yaml")  # UserRegistrationAgent 포함되어 있어야 함
+
+AgentRegistry.auto_discover("agents.implementations")
+logger.info(AgentRegistry.list_agents())
+# 그래프 빌드
+builder = GraphBuilder(LLMStateSchema)
+builder.add_agent_node("user_regri", "user_registration") \
+    .set_entry_point("user_regri") \
+    .set_finish_point("user_regri")
+
+graph = builder.build()
+
 
 class ChatRequest(BaseModel):
     message: str

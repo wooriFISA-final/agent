@@ -7,6 +7,8 @@ from agents.base.agent_base import AgentBase, BaseAgentConfig
 from agents.registry.agent_registry import AgentRegistry
 from core.llm.llm_manger import LLMManager
 
+from mcp_host.mcp_client import mcp_client 
+
 logger = logging.getLogger("agent_system")
 
 
@@ -29,7 +31,7 @@ class UserRegistrationAgent(AgentBase):
 
     def __init__(self, config: BaseAgentConfig):
         super().__init__(config)
-        self.client = config.client
+        self.client = mcp_client # 임시 테스트용
         self.llm = LLMManager.get_llm(provider=getattr(config, "provider", "ollama"),
                                       model=config.model_name)
 
