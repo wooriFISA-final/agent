@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
-from agent.plan_graph import create_graph
+from plan_graph import create_graph
 from langchain_core.messages import HumanMessage
 
 app = FastAPI(title="Multi-Agent Planner")

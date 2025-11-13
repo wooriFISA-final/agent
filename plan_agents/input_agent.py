@@ -2,321 +2,218 @@ import os
 import re
 import json
 import logging
-import asyncio
-from typing import Dict, Any, List, Optional
-
-from sqlalchemy import create_engine, Column, Integer, String, BigInteger, Enum, ForeignKey, DateTime
-from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy.sql import func
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+from langchain_ollama import ChatOllama
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-# LangChain / LangGraph 관련
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage
-# [수정!] MessagesState는 이제 'TYPE_CHECKING'에만 사용됩니다.
-# from langgraph.graph import MessagesState 
-from langchain_community.chat_models import ChatOllama
-from pydantic import BaseModel, Field, field_validator
-
-# [신규!] 순환 참조를 피하기 위한 '타입 힌트' 전용 임포트
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    # 이 코드는 실행 시에는 무시되지만,
-    # VSCode 같은 IDE가 타입을 인식하도록 도와줍니다.
-    # [!] plan_graph.py의 위치에 따라 . 또는 ..을 조정해야 합니다.
-    from ..plan_graph import GraphState
-
-
-# --- 로거 설정 ---
+# ----------------------------------
+# 환경 설정 및 로깅
+# ----------------------------------
+load_dotenv()
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# --- DB 설정 ---
-load_dotenv()
 DB_USER = os.getenv("user")
 DB_PASSWORD = os.getenv("password")
 DB_HOST = os.getenv("host")
 DB_NAME = os.getenv("database")
 
-Base = declarative_base()
-engine = create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}", echo=False)
-Session = sessionmaker(bind=engine)
+# ✅ DB 연결은 ValidationAgent에서만 사용함 (이 파일에서는 필요 없음)
+# engine = create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}")
+
+# ----------------------------------
+# LLM 설정
+# ----------------------------------
+llm = ChatOllama(model="qwen3:8b", temperature=0.3)
+
+# ----------------------------------
+# SYSTEM PROMPT
+# ----------------------------------
+SYSTEM_PROMPT = SystemMessage(content="""
+[페르소나(Persona)]
+당신은 '우리은행 부동산 재무 설계 상담사(WooriPlanner)'입니다.  
+고객의 재무 상황을 친근하고 따뜻하게 묻되, 불필요한 인사나 자기소개를 반복하지 않습니다.  
+모든 질문은 한 번에 하나씩, 자연스럽게 물어봐야 합니다.
+
+[TASK]
+1️⃣ 질문은 반드시 한 항목씩만 합니다.  
+2️⃣ 다음 다섯 가지 정보를 순서대로 수집합니다:
+   - initial_prop : 초기 사용 가능 자산 (예: 3000만원)
+   - hope_location : 희망 지역 (예: 서울 마포구)
+   - hope_price : 희망 주택 가격 (예: 12억 5천만원)
+   - hope_housing_type : 주택 유형 (아파트, 오피스텔, 단독다가구, 연립다세대)
+   - income_usage_ratio : 월급 중 주택 자금 사용 비율 (예: 30%)
+3️⃣ 금액 단위(억, 천만, 만)는 모두 원 단위 정수로 인식합니다.
+4️⃣ 불필요한 감탄사, 인사말, 자기소개를 반복하지 않습니다.
+5️⃣ 응답은 오직 자연스러운 한국어 문장으로만 구성합니다.
+""")
+
+# ----------------------------------
+# 금액 단위 변환 함수
+# ----------------------------------
+def parse_korean_currency(value: Any) -> int:
+    """'3억 5천' 같은 금액 표현을 정수(원)로 변환"""
+    if value is None or value == "":
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+
+    value = str(value).replace(",", "").replace(" ", "")
+    total = 0
+    for pattern, multiplier in [
+        (r"(\d+(?:\.\d+)?)억", 100000000),
+        (r"(\d+(?:\.\d+)?)천만", 10000000),
+        (r"(\d+(?:\.\d+)?)백만", 1000000),
+        (r"(\d+(?:\.\d+)?)만", 10000),
+    ]:
+        match = re.search(pattern, value)
+        if match:
+            total += float(match.group(1)) * multiplier
+
+    if total == 0:
+        try:
+            total = int(float(re.sub(r"[^0-9]", "", value)))
+        except ValueError:
+            total = 0
+    return int(total)
 
 
-# --- 1️⃣ user_info 테이블 ---
-class UserInfo(Base):
-    __tablename__ = "user_info"
-    user_id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(50), nullable=False)
-    age = Column(Integer)
-    job_type = Column(String(50))
-    employment_years = Column(Integer)
-
-
-# --- 2️⃣ plan_input 테이블 ---
-class PlanInput(Base):
-    __tablename__ = "plan_input"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("user_info.user_id", ondelete="CASCADE"), nullable=False)
-    target_house_price = Column(BigInteger)
-    target_location = Column(String(100))
-    housing_type = Column(String(50))
-    available_assets = Column(BigInteger)
-    income_usage_ratio = Column(Integer)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-
-Base.metadata.create_all(engine)
-
-
-# --- 유틸리티 함수 ---
-def normalize_location(location: str):
-    location = location.strip()
-    if location.startswith("서울"):
-        return location
-    match = re.match(r"^(\S+시|\S+특별자치시)", location)
-    if match:
-        normalized = match.group(1)
-        logger.info(f"입력 지역 '{location}'은 '{normalized}' 기준으로 처리됩니다.")
-        return normalized
-    return location
-
-
-def summarize_plan(data: dict):
-    location_note = " (※ 서울특별시는 구 단위 기준, 그 외 지역은 시 평균 기준)"
-    summary = f"""
-    [입력 요약]
-    ---------------------------------
-    - 주택 가격: {data.get('target_house_price', 'N/A')}원
-    - 위치: {data.get('target_location', 'N/A')}{location_note}
-    - 주거지 형태: {data.get('housing_type', 'N/A')}
-    - 사용 가능 자산: {data.get('available_assets', 'N/A')}원
-    - 소득 활용 비율: {data.get('income_usage_ratio', 'N/A')}%
-    ---------------------------------
-    """
-    logger.info(summary)
-    return summary
-
-
-# --- Pydantic 모델 정의 ---
-class ExtractedInfo(BaseModel):
-    target_house_price: Optional[str] = Field(description="목표 주택 가격 (원 단위, 숫자만)")
-    target_location: Optional[str] = Field(description="주택 위치 (예: 서울 송파구)")
-    housing_type: Optional[str] = Field(description="주거지 형태 (아파트, 오피스텔 등)")
-    available_assets: Optional[str] = Field(description="현재 사용 가능한 자산 (원 단위, 숫자만)")
-    income_usage_ratio: Optional[str] = Field(description="월급에서 저축/투자에 사용할 비율 (퍼센트, 숫자만)")
-
-
-class ValidatedPlanInput(BaseModel):
-    user_id: int
-    target_house_price: int
-    target_location: str
-    housing_type: str
-    available_assets: int
-    income_usage_ratio: int
-
-    @field_validator('target_location')
-    def validate_location(cls, v):
-        return normalize_location(v)
-
-
-# --- ✅ PlanInputAgent 정의 ---
+# ----------------------------------
+# PlanInputAgent
+# ----------------------------------
 class PlanInputAgent:
-    """
-    대화형으로 재무 계획 입력을 수집하고 검증하는 Agent.
-    LangGraph에서 사용할 노드 팩토리(create_..._node)를 제공합니다.
-    """
+    def __init__(self):
+        self.llm = llm
+        self.system_prompt = SYSTEM_PROMPT
+        self.question_order = [
+            ("initial_prop", "초기 사용 가능 자산은 얼마인가요? (예: 3000만원)"),
+            ("hope_location", "희망 지역을 알려주세요 (예: 서울 마포구)"),
+            ("hope_price", "구매를 희망하는 주택의 가격은 얼마인가요? (예: 12억 5천만원)"),
+            ("hope_housing_type", "희망 주택 유형은 무엇인가요? (아파트, 오피스텔, 단독다가구, 연립다세대 중 택1)"),
+            ("income_usage_ratio", "월급 중 주택 자금으로 사용할 비율은 몇 퍼센트인가요? (예: 30%)")
+        ]
 
-    def __init__(self, model="qwen3:8b"):
-        self.llm = ChatOllama(model=model, temperature=0.0)
-        self.required_info_schema = ExtractedInfo.model_json_schema()["properties"]
+    # ----------------------------------
+    # 입력값 파싱
+    # ----------------------------------
+    def _simple_parse(self, field: str, value: str):
+        if field in ["initial_prop", "hope_price"]:
+            return parse_korean_currency(value)
+        elif field == "income_usage_ratio":
+            try:
+                return int(str(value).replace("%", "").strip())
+            except:
+                return 0
+        elif field in ["hope_location", "hope_housing_type"]:
+            return value.strip()
+        return value
 
-        self.system_prompt = SystemMessage(content=f"""
-        당신은 사용자의 대화 내용을 분석하여 재무 계획에 필요한 정보를 추출하는 AI입니다.
-        다음 항목들을 JSON 형태로 추출하세요:
+    # ----------------------------------
+    # 자연스러운 질문 생성
+    # ----------------------------------
+    def _generate_natural_question(self, field_key: str, base_question: str) -> str:
+        messages = [
+            self.system_prompt,
+            HumanMessage(content=f"다음 문장을 자연스럽게 질문으로 바꿔주세요:\n'{base_question}'")
+        ]
+        response = self.llm.invoke(messages)
+        return response.content.strip()
 
-        {json.dumps(self.required_info_schema, indent=2, ensure_ascii=False)}
-
-        규칙:
-        1. 대화 내용에서 알 수 있는 항목만 추출.
-        2. 정보가 부족한 항목은 JSON에서 제외.
-        3. JSON 형식만 반환 (설명 금지).
-
-        예시:
-        {{
-          "target_house_price": "1000000000",
-          "target_location": "서울 송파구"
-        }}
-        """)
-
-    # -------------------------------
-    # 1️⃣ 정보 추출 노드
-    # -------------------------------
+    # ----------------------------------
+    # LangGraph: 입력 수집 노드
+    # ----------------------------------
     def create_extraction_node(self):
-        
-        # 'state' 타입은 'Any' (혹은 비워둠)
-        async def extraction_node(state): 
-            
-            # '지연 임포트'
-            try:
-                from agent.plan_graph import GraphState
-            except ImportError:
-                from ..plan_graph import GraphState
-            
-            state: "GraphState" = state 
-            
-            logger.info("ℹ️ PlanInputAgent: 정보 추출 중...")
+        async def extraction_node(state):
+            user_id = state.get("user_id") or 1
+            collected = state.get("extracted_info", {}) or {}
+            pending_fields = [f for f, _ in self.question_order if f not in collected or not collected[f]]
 
-            # [!!!] 이 'try' 블록이 중요합니다 [!!!]
-            try:
-                history_messages = state.get("messages", [])
-                llm_messages = [self.system_prompt] + history_messages
+            # 첫 질문
+            if not collected and not state.get("messages", []):
+                q = self._generate_natural_question("initial_prop", self.question_order[0][1])
+                logger.info(f"👤 user_id={user_id} | 첫 질문: {q}")
+                return {
+                    "user_id": user_id,
+                    "extracted_info": {},
+                    "input_completed": False,
+                    "messages": [AIMessage(content=q)]
+                }
 
-                response = await self.llm.ainvoke(llm_messages)
-                response_text = response.content.strip()
+            # 사용자 입력
+            last_msg = state.get("messages", [])
+            user_input = last_msg[-1].content.strip() if last_msg else ""
+            current_field = pending_fields[0] if pending_fields else None
 
-                json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
-                
-                # 1. 파싱 실패 시
-                if not json_match:
-                    raise json.JSONDecodeError("LLM 응답에서 JSON 객체를 찾지 못함", response_text, 0)
+            if not user_input:
+                q = dict(self.question_order)[current_field]
+                natural_q = self._generate_natural_question(current_field, q)
+                return {
+                    "user_id": user_id,
+                    "extracted_info": collected,
+                    "input_completed": False,
+                    "messages": [AIMessage(content=natural_q)]
+                }
 
-                # 2. 'extracted_data' 정의
-                extracted_data = json.loads(json_match.group(0))
-                
-                # (plan_graph.py의 병합 함수가 'None'을 처리해 줌)
-                current_info = state.get("extracted_info", {}) 
-                
-                # 3. 'extracted_data' 사용
-                # [!] 2번과 3번은 *반드시* 같은 try 블록 안에 있어야 합니다.
-                current_info.update(extracted_data) 
-                
-                parsed_info = ExtractedInfo(**current_info)
+            # 입력값 저장
+            if current_field:
+                collected[current_field] = self._simple_parse(current_field, user_input)
 
-                logger.info(f"✅ 정보 추출/업데이트 완료: {parsed_info.model_dump_json(exclude_unset=True)}")
+            # 다음 질문 or 완료
+            pending_fields = [f for f, _ in self.question_order if f not in collected or not collected[f]]
+            if pending_fields:
+                next_field = pending_fields[0]
+                q = dict(self.question_order)[next_field]
+                natural_q = self._generate_natural_question(next_field, q)
+                return {
+                    "user_id": user_id,
+                    "extracted_info": collected,
+                    "input_completed": False,
+                    "messages": [AIMessage(content=natural_q)]
+                }
 
-                # 4. 성공 시 반환
-                return {"extracted_info": parsed_info.model_dump(exclude_unset=True)}
+            # ✅ 모든 입력 완료 시
+            logger.info(f"✅ 모든 입력 완료 (user_id={user_id}): {collected}")
+            return {
+                "user_id": user_id,
+                "extracted_info": collected,
+                "input_completed": True,
+                "messages": [
+                    AIMessage(content="✅ 입력이 모두 완료되었습니다. 이제 입력하신 정보를 검증하겠습니다.")
+                ],
+            }
 
-            # 5. 1~3번에서 뭐 하나라도 실패하면...
-            except Exception as e:
-                # 6. 여기가 실행됨 (update는 건너뜀)
-                logger.error(f"❌ PlanInputAgent(추출) 오류: {e}", exc_info=True)
-                return {"messages": [AIMessage(content=f"정보 추출 중 오류 발생: {e}")]}
-        
         return extraction_node
 
-    # -------------------------------
-    # 2️⃣ 완전성 검사 노드
-    # -------------------------------
+    # ----------------------------------
+    # 완전성 검사 노드
+    # ----------------------------------
     def create_check_completeness_node(self):
-        
-        # [수정!] state: MessagesState -> state
-        async def check_completeness_node(state):
-            
-            # [신규!] '지연 임포트'
-            try:
-                from agent.plan_graph import GraphState
-            except ImportError:
-                from ..plan_graph import GraphState
-            
-            state: "GraphState" = state
-            
-            logger.info("ℹ️ PlanInputAgent: 정보 완전성 검사 중...")
-            
-            # [중요!] state.get("extracted_info")가 이제 정상적으로 데이터를 가져옴
-            extracted_info = state.get("extracted_info", {})
+        async def completeness_node(state):
+            info = state.get("extracted_info", {}) or {}
+            required = [f for f, _ in self.question_order]
+            missing = [f for f in required if not info.get(f)]
 
-            missing_info = []
-            for key, desc in self.required_info_schema.items():
-                if not extracted_info.get(key):
-                    missing_info.append(desc.get("description", key))
-
-            if not missing_info:
-                logger.info("✅ 모든 필수 정보 수집 완료.")
-                try:
-                    user_id = state.get("user_id", 0)
-
-                    validated_data = ValidatedPlanInput(
-                        user_id=user_id,
-                        **extracted_info
-                    )
-                    summary = summarize_plan(validated_data.model_dump())
-                    
-                    # [수정!] 'original_input'을 여기서 반환 (라우터 수정 불필요)
-                    return {
-                        "input_completed": True,
-                        "validated_plan_input": validated_data.model_dump(),
-                        "original_input": extracted_info, # 👈 다음 노드(validate)를 위해 추가
-                        "messages": [AIMessage(content=f"모든 정보가 수집되었습니다.\n{summary}")]
-                    }
-                                    
-                except Exception as e:
-                    logger.warning(f"⚠️ Pydantic 검증 실패: {e}")
-                    return {
-                        "input_completed": False,
-                        "messages": [AIMessage(content=f"입력 정보를 확인하는 중 오류가 발생했습니다: {e}. 다시 말씀해 주시겠어요?")]
-                    }
-            else:
-                missing_str = ", ".join(missing_info)
-                logger.info(f"⚠️ 부족한 정보: {missing_str}")
-                ai_question = f"말씀 감사합니다. 추가적으로 다음 정보가 필요합니다: **{missing_str}**. 알려주시겠어요?"
+            if missing:
+                missing_field = missing[0]
+                base_q = dict(self.question_order)[missing_field]
+                messages = [
+                    self.system_prompt,
+                    HumanMessage(content=f"'{base_q}'에 대해 부드럽고 자연스럽게 물어봐줘.")
+                ]
+                response = self.llm.invoke(messages)
+                natural_q = response.content.strip()
+                logger.warning(f"⚠️ {missing_field} 정보 누락 → LLM 질문: {natural_q}")
                 return {
                     "input_completed": False,
-                    "messages": [AIMessage(content=ai_question)]
+                    "messages": [AIMessage(content=natural_q)]
                 }
-        return check_completeness_node
 
-    # -------------------------------
-    # 3️⃣ DB 저장 노드
-    # -------------------------------
-    def create_save_to_db_node(self):
-        def _save_sync(data: dict) -> int:
-            db_session = Session()
-            try:
-                # ✅ user_id 기본값 설정 (없으면 1로)
-                if not data.get("user_id"):
-                    logger.warning("⚠️ user_id가 비어 있어 기본값 1로 저장합니다.")
-                    data["user_id"] = 1
+            # 모든 입력이 존재 → 검증 단계로 이동
+            return {
+                "input_completed": True,
+                "messages": [AIMessage(content="✅ 모든 정보가 입력되었습니다. 검증을 시작합니다.")]
+            }
 
-                # ✅ location → target_location 자동 변환
-                if "location" in data and "target_location" not in data:
-                    data["target_location"] = data.pop("location")
-
-                record = PlanInput(**data)
-                db_session.add(record)
-                db_session.commit()
-                plan_id = record.id
-                logger.info(f"✅ [DB 저장 완료] plan_id: {plan_id}")
-                return plan_id
-            except Exception as e:
-                db_session.rollback()
-                logger.error(f"❌ [DB 저장 오류] {e}")
-                raise
-            finally:
-                db_session.close()
-
-
-        # [수정!] state: MessagesState -> state
-        async def save_to_db_node(state):
-            
-            # [신규!] '지연 임포트'
-            try:
-                from agent.plan_graph import GraphState
-            except ImportError:
-                from ..plan_graph import GraphState
-            
-            state: "GraphState" = state
-            
-            logger.info("ℹ️ PlanInputAgent: DB 저장 중...")
-            
-            # [중요!] state.get("validated_plan_input")을 정상적으로 가져옴
-            validated_data = state.get("validated_plan_input")
-            if not validated_data:
-                return {"messages": [AIMessage(content="저장할 데이터가 없습니다.")]}
-            try:
-                plan_id = await asyncio.to_thread(_save_sync, validated_data)
-                return {"plan_id": plan_id,
-                        "messages": [AIMessage(content=f"계획이 저장되었습니다. (Plan ID: {plan_id})")]}
-            except Exception as e:
-                return {"messages": [AIMessage(content=f"DB 저장 오류: {e}")]}
-        return save_to_db_node
+        return completeness_node
