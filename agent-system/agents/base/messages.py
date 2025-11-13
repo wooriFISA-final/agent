@@ -2,6 +2,13 @@ from langchain_core.messages import AIMessage
 from datetime import datetime
 from typing import Optional, Dict
 
+class HumanMessage(Message):
+    pass
+class AIMessage(Message):
+    pass
+
+class ToolMessage(Message):
+    pass
 class ThinkMessage(AIMessage):
     """Agent 내부 사고 메시지"""
     def __init__(self, content: str, metadata: Optional[Dict] = None, timestamp: Optional[datetime] = None):
