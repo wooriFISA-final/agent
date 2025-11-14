@@ -1,12 +1,12 @@
 import math
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 import os
 import json
 from langchain_ollama import ChatOllama
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 # ----------------------------------
 # 환경 설정 및 로깅
@@ -21,10 +21,71 @@ DB_HOST = os.getenv("host")
 DB_NAME = os.getenv("database")
 
 
+# ============================================================
+# 💼 SummaryAgent (그래프의 단일 노드로 사용)
+# ============================================================
 class SummaryAgent:
     def __init__(self, model_name: str = "qwen3:8b"):
         self.llm = ChatOllama(model=model_name, temperature=0.5)
         self.engine = create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}")
+
+        # ✅ 새 SYSTEM PROMPT (자산관리 리포트용)
+        self.SYSTEM_PROMPT = SystemMessage(content="""
+[페르소나(Persona)]
+당신은 '우리은행 프리미엄 자산관리 컨설턴트'입니다.  
+고객의 대출, 저축, 투자 데이터를 기반으로 **구체적인 상품 추천 보고서**를 작성합니다.  
+전문적이지만 따뜻한 어조로 고객 맞춤형 재무 조언을 제시해야 합니다.
+
+---
+
+[작성 형식]
+아래 단계별로 작성하세요. 반드시 각 항목을 포함해야 합니다.
+
+### 1️⃣ 대출 상품 분석 및 추천
+- 고객의 소득, 희망 주택 가격, 보유 자산을 고려하여 대출 가능한 상품을 소개합니다.  
+- 다음 형식을 사용하세요:
+  - 상품명: (예: 스마트징검다리론)
+  - 상품 설명: (대출 대상, 특징, 금리, 상환방식 등)
+  - 예상 대출금액: (고객 데이터 기반)
+  - 이 상품이 고객에게 적합한 이유를 설명하세요.
+
+---
+
+### 2️⃣ 예금 상품 추천
+- 예금상품 중 2~3개를 선택하여 소개합니다.
+- 각 상품은 다음 형식을 사용하세요:
+  - 상품명:
+  - 상품 설명:
+  - 예상 수익 및 추천 이유:
+- 고객의 자금 규모를 고려해 “이 예금을 통해 모을 수 있는 금액”을 구체적으로 언급하세요.
+
+---
+
+### 3️⃣ 적금 상품 및 펀드 추천
+- 적금상품 1~2개, 펀드상품 1~2개를 각각 소개하세요.
+- 각 상품은 예금 추천과 동일한 형식을 따르세요.
+- 펀드상품은 ‘수익률 기대치’나 ‘위험 수준’을 함께 언급하세요.
+
+---
+
+### 4️⃣ 종합 분석 및 예상 소요기간
+- 위의 추천 상품을 조합했을 때, 고객이 목표 주택금액을 달성하기까지의 예상 기간을 요약하세요.
+- “총 약 X년 (X개월) 정도가 예상됩니다.” 문장을 포함하세요.
+
+---
+
+### 5️⃣ 마무리 인사
+- 고객 이름을 포함하여, 따뜻하고 전문적인 어조로 격려하는 마무리 문장을 작성하세요.
+- 예: “유진수님, 지금의 계획은 매우 실질적이며 장기적인 재무 안정에 큰 도움이 될 것입니다. 꾸준함이 최고의 자산입니다.”
+
+---
+
+[스타일 가이드]
+- 마크다운 형식 사용 (### 제목, **강조**)
+- 길이는 800~1200자 내외
+- 데이터 수치를 자연스럽게 녹여서 서술
+- 모든 금액은 “원” 단위로 표시
+""")
 
     # -----------------------------------------------------------------
     # ① DB 조회 (members + plans + loan_product JOIN)
@@ -63,52 +124,35 @@ class SummaryAgent:
         return dict(result)
 
     # -----------------------------------------------------------------
-    # ② 부족금 계산 + members 테이블 업데이트 (안정화)
+    # ② 부족금 계산 + members 테이블 업데이트
     # -----------------------------------------------------------------
-    def _calculate_shortage_and_update(self, user_id, plan_data, loan_data):
-        """
-        loan_data가 없거나 loan_amount 키가 빠져 있을 때 안전하게 처리.
-        """
+    def _calculate_shortage_and_update(self, user_id: int, plan_data: Dict[str, Any], loan_data: Dict[str, Any]) -> int:
         if not loan_data:
             logger.warning("⚠️ loan_data가 비어 있음, 기본값 0으로 대체")
             loan_data = {"loan_amount": 0}
 
-        # loan_result가 감싸고 있을 수도 있으므로 fallback 구조 처리
         loan_info = loan_data.get("loan_result", loan_data)
-        logger.debug(f"🔍 loan_info 데이터 구조: {loan_info}")
-
-        # loan_amount 또는 last_loan_amount 우선 탐색
-        loan_amt = loan_info.get("loan_amount") or loan_info.get("last_loan_amount") or 0
-        init_prop = plan_data.get("initial_prop", 0)
-        hope_price = plan_data.get("hope_price", 0)
-
-        # 안전하게 숫자형 변환
-        try:
-            loan_amt = int(loan_amt)
-            init_prop = int(init_prop)
-            hope_price = int(hope_price)
-        except Exception:
-            logger.warning("⚠️ 금액 변환 오류 - 기본값 사용")
-            loan_amt, init_prop, hope_price = 0, 0, 0
+        loan_amt = int(loan_info.get("loan_amount") or 0)
+        init_prop = int(plan_data.get("initial_prop", 0) or 0)
+        hope_price = int(plan_data.get("hope_price", 0) or 0)
 
         shortage = max(0, hope_price - (loan_amt + init_prop))
 
-        # DB 업데이트
         with self.engine.begin() as conn:
             conn.execute(
                 text("UPDATE members SET shortage_amount = :shortage WHERE user_id = :uid"),
                 {"shortage": shortage, "uid": user_id},
             )
 
-        logger.info(f"✅ shortage_amount({shortage:,}) DB 업데이트 완료 (loan_amount={loan_amt:,}, init_prop={init_prop:,})")
+        logger.info(f"✅ shortage_amount({shortage:,}) 업데이트 완료 (loan_amount={loan_amt:,}, init_prop={init_prop:,})")
         return shortage
 
     # -----------------------------------------------------------------
-    # ③ LLM 기반 투자 비중 판단
+    # ③ 투자 비율 산출 (LLM 기반)
     # -----------------------------------------------------------------
-    def _get_optimal_investment_ratio(self, saving_results, fund_results):
-        saving_yield = saving_results.get("average_yield", 3.0)
-        fund_yield = fund_results.get("average_yield", 6.0)
+    def _get_optimal_investment_ratio(self, saving_results: Dict[str, Any], fund_results: Dict[str, Any]) -> Tuple[float, float]:
+        saving_yield = float(saving_results.get("average_yield", 3.0))
+        fund_yield = float(fund_results.get("average_yield", 6.0))
 
         prompt = f"""
         당신은 금융 포트폴리오 전문가입니다.
@@ -126,139 +170,125 @@ class SummaryAgent:
         """
         try:
             response = self.llm.invoke([SystemMessage(content=prompt)])
-            raw = response.content.strip()
-            data = json.loads(raw.replace("```json", "").replace("```", "").strip())
+            # fence 제거 후 파싱
+            payload = response.content.strip().replace("```json", "").replace("```", "").strip()
+            data = json.loads(payload)
             return float(data.get("recommended_saving_ratio", 0.35)), float(data.get("recommended_fund_ratio", 0.65))
         except Exception as e:
             logger.warning(f"⚠️ 투자 비율 계산 실패, 기본값 사용: {e}")
             return 0.35, 0.65
 
     # -----------------------------------------------------------------
-    # ④ 복리 기반 투자 시뮬레이션
+    # ④ 복리 기반 투자 시뮬레이션(간단 모델)
     # -----------------------------------------------------------------
-    def _simulate_combined_investment(self, shortage, available_assets, monthly_income,
-                                      income_usage_ratio, saving_yield, fund_yield,
-                                      saving_ratio, fund_ratio):
+    def _simulate_combined_investment(
+        self,
+        shortage: int,
+        available_assets: int,
+        monthly_income: float,
+        income_usage_ratio: float,
+        saving_yield: float,
+        fund_yield: float,
+        saving_ratio: float,
+        fund_ratio: float,
+    ) -> Dict[str, Any]:
         init_saving = available_assets * saving_ratio
         init_fund = available_assets * fund_ratio
+
         monthly_invest = monthly_income * (income_usage_ratio / 100)
         saving_monthly = monthly_invest * saving_ratio
         fund_monthly = monthly_invest * fund_ratio
 
-        total_balance = 0
+        total_balance = 0.0
         months = 0
+        # 간단 누적 모델(월복리 + 적립식 단순 가산)
         while total_balance < shortage and months < 600:
             months += 1
-            init_saving *= (1 + saving_yield / 100 / 12)
-            init_fund *= (1 + fund_yield / 100 / 12)
-            total_balance = init_saving + init_fund + (months * (saving_monthly + fund_monthly))
+            init_saving = (init_saving + saving_monthly) * (1 + saving_yield / 100 / 12)
+            init_fund = (init_fund + fund_monthly) * (1 + fund_yield / 100 / 12)
+            total_balance = init_saving + init_fund
 
-        return {"months_needed": months, "total_balance": int(total_balance), "monthly_invest": int(monthly_invest)}
-
-    # -----------------------------------------------------------------
-    # ⑤ 투자 결과 plans 테이블 업데이트
-    # -----------------------------------------------------------------
-    def _update_plan_targets(self, user_id: int, shortage: int, result: Dict[str, Any],
-                             saving_ratio: float, fund_ratio: float):
-        target_self_capital = shortage
-        target_price_saving = int(result["total_balance"] * saving_ratio)
-        target_price_fund = int(result["total_balance"] * fund_ratio)
-        target_price_deposit = 0
-
-        with self.engine.begin() as conn:
-            conn.execute(
-                text("""
-                    UPDATE plans
-                    SET 
-                        target_self_capital = :self_capital,
-                        target_price_saving = :saving,
-                        target_price_fund = :fund,
-                        target_price_deposit = :deposit
-                    WHERE user_id = :uid
-                    ORDER BY plan_id DESC
-                    LIMIT 1
-                """),
-                {
-                    "self_capital": target_self_capital,
-                    "saving": target_price_saving,
-                    "fund": target_price_fund,
-                    "deposit": target_price_deposit,
-                    "uid": user_id,
-                },
-            )
-        logger.info(f"✅ plans 테이블 업데이트 완료 (user_id={user_id})")
+        return {
+            "months_needed": months,
+            "total_balance": int(total_balance),
+            "monthly_invest": int(monthly_invest),
+            "saving_ratio": saving_ratio,
+            "fund_ratio": fund_ratio,
+        }
 
     # -----------------------------------------------------------------
-    # ⑥ 리포트 프롬프트 (결론부는 LLM이 직접 작성)
+    # ⑤ 리포트 생성용 사용자 프롬프트
     # -----------------------------------------------------------------
-    def _build_prompt(self, user_data, shortage, result, saving_results, fund_results, saving_ratio, fund_ratio):
+    def _build_prompt(
+        self,
+        user_data: Dict[str, Any],
+        shortage: int,
+        result: Dict[str, Any],
+        saving_results: Dict[str, Any],
+        fund_results: Dict[str, Any],
+        saving_ratio: float,
+        fund_ratio: float,
+    ) -> str:
         def fmt(v):
             return "정보 없음" if v in (None, "", 0) else f"{int(v):,}원"
 
-        current_balance = user_data.get("initial_prop", 0) + result["total_balance"]
-        remaining_gap = max(0, user_data.get("hope_price", 0) - current_balance)
+        product_name = user_data.get("product_name", "정보 없음")
+        product_summary = user_data.get("product_summary", "상품 설명이 없습니다.")
 
-        return f"""
-안녕하세요, {user_data.get('user_name', '고객')}님.  
-현재 확인된 연소득은 {fmt(user_data.get('salary'))}이며,  
-보유 자산은 약 {fmt(user_data.get('initial_prop'))}입니다.  
-희망하시는 주택 가격은 {fmt(user_data.get('hope_price'))} 수준으로 확인됩니다.  
+        prompt = f"""
+고객 요약 데이터:
+- 이름: {user_data.get('user_name', '고객')}
+- 연소득: {fmt(user_data.get('salary'))}
+- 보유 자산: {fmt(user_data.get('initial_prop'))}
+- 희망 주택 가격: {fmt(user_data.get('hope_price'))}
+- 예상 대출금액: {fmt(user_data.get('loan_amount'))}
+- 부족 금액: {fmt(shortage)}
+- 월 소득 대비 저축·투자 비율: {user_data.get('income_usage_ratio', 30)}%
+- 예금 평균 수익률: {saving_results.get('average_yield', 3.0)}%
+- 펀드 평균 수익률: {fund_results.get('average_yield', 6.0)}%
+- 추천 비중(예금/펀드): {int(saving_ratio*100)}% / {int(fund_ratio*100)}%
+- 목표 달성 예상 기간: 약 {result['months_needed']}개월 (약 {round(result['months_needed']/12,1)}년)
+- 추천 대출 상품: {product_name} / {product_summary}
 
-추천 대출 상품은 '{user_data.get('product_name', '정보 없음')}'이며,  
-{user_data.get('product_summary', '상품 설명이 없습니다.')}  
-예상 대출 금액은 약 {fmt(user_data.get('loan_amount'))},  
-부족 금액은 약 {fmt(shortage)}로 계산됩니다.
-
-현재 고객님의 월 소득 중 {user_data.get('income_usage_ratio', 30)}%를  
-저축과 투자에 활용 중인 것으로 보입니다.  
-이 자금을 예금/적금({saving_ratio*100:.1f}%), 펀드({fund_ratio*100:.1f}%)로 분배하면  
-약 {result['months_needed']}개월(약 {round(result['months_needed']/12,1)}년) 후  
-부족 금액 {fmt(shortage)}를 모두 채우실 수 있습니다.
-
-월 재투자 금액은 {fmt(result['monthly_invest'])},  
-총 누적 자금은 {fmt(result['total_balance'])}이며  
-전체 자산은 {current_balance:,}원으로 예상됩니다.  
-목표 주택 금액까지는 약 {remaining_gap:,}원이 부족합니다.
-
-이 데이터를 기반으로,  
-금융 전문가의 시각에서 고객에게 조언을 제시해주세요.  
-내용에는 다음이 포함되어야 합니다:
-1. 투자 전략 요약 (위험 vs 안정성 균형)
-2. 대출/저축 활용 조언
-3. 장기 재무 관점에서의 격려 문장
-4. 자연스러운 마무리 인사
+위 정보를 기반으로 **고객 맞춤형 자산관리 보고서**를 작성하세요.
+지침을 철저히 따르고 마크다운(###, **강조**)을 사용하세요.
 """
+        return prompt
 
     # -----------------------------------------------------------------
-    # ⑦ 실행 (DB 업데이트 + 리포트 생성 + summary_report 저장)
+    # ⑥ 실행 (DB 업데이트 + 리포트 생성 + summary_report 저장)
     # -----------------------------------------------------------------
-    def run(self, user_id, plan_data, loan_data, saving_results, fund_results):
+    async def run(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        user_id = state.get("user_id")
+        plan_data = state.get("validated_plan_input", {}) or {}
+        loan_data = state.get("loan_result", {}) or {}
+        saving_results = state.get("savings_recommendations", {}) or {}
+        fund_results = state.get("fund_analysis_result", {}) or {}
+
+        # 1) 사용자/대출 데이터 로드 + 부족금 계산
         user_data = self._fetch_user_and_loan_info(user_id)
-
-        # ✅ 안전한 부족금 계산
         shortage = self._calculate_shortage_and_update(user_id, plan_data, loan_data)
-
         monthly_income = (user_data.get("salary", 0) or 0) / 12
-        saving_ratio, fund_ratio = self._get_optimal_investment_ratio(saving_results, fund_results)
 
+        # 2) 투자 비중 추정 + 간단 시뮬레이션
+        saving_ratio, fund_ratio = self._get_optimal_investment_ratio(saving_results, fund_results)
         result = self._simulate_combined_investment(
-            shortage,
-            user_data.get("initial_prop", 0),
-            monthly_income,
-            float(user_data.get("income_usage_ratio", 20)),
-            saving_results.get("average_yield", 3.0),
-            fund_results.get("average_yield", 6.0),
-            saving_ratio,
-            fund_ratio,
+            shortage=shortage,
+            available_assets=int(user_data.get("initial_prop", 0) or 0),
+            monthly_income=float(monthly_income),
+            income_usage_ratio=float(user_data.get("income_usage_ratio", 20)),
+            saving_yield=float(saving_results.get("average_yield", 3.0)),
+            fund_yield=float(fund_results.get("average_yield", 6.0)),
+            saving_ratio=saving_ratio,
+            fund_ratio=fund_ratio,
         )
 
-        self._update_plan_targets(user_id, shortage, result, saving_ratio, fund_ratio)
-
+        # 3) 리포트 생성
         prompt = self._build_prompt(user_data, shortage, result, saving_results, fund_results, saving_ratio, fund_ratio)
-        response = self.llm.invoke([SystemMessage(content=prompt)])
+        response = self.llm.invoke([self.SYSTEM_PROMPT, HumanMessage(content=prompt)])
         summary_text = response.content.strip()
 
-        # ✅ summary_report 저장
+        # 4) 보고서 저장
         with self.engine.begin() as conn:
             conn.execute(
                 text("""
@@ -270,10 +300,17 @@ class SummaryAgent:
                 """),
                 {"report": summary_text, "uid": user_id},
             )
-        logger.info(f"✅ summary_report 컬럼 업데이트 완료 (user_id={user_id})")
+        logger.info(f"✅ summary_report 저장 완료 (user_id={user_id})")
 
+        # 5) 반환 — UI가 바로 렌더할 수 있도록 본문을 messages에 포함
         return {
-            "shortage_amount": shortage,
-            "investment_result": result,
-            "summary_text": summary_text
+            "summary_result": {
+                "shortage_amount": shortage,
+                "investment_result": result,
+                "summary_text": summary_text
+            },
+            # 👉 여기서 실제 보고서 본문을 AIMessage로 넣어줌
+            "messages": [AIMessage(content=summary_text)],
+            # 👉 토스트/배너 등 별도 알림이 필요하면 notifications로 제공(선택)
+            "notifications": ["📊 맞춤형 자산관리 보고서를 생성하고 저장했습니다."]
         }

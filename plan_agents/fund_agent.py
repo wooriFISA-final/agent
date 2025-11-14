@@ -1,21 +1,24 @@
+import os
 import json
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from pathlib import Path 
-import operator
-from typing import TypedDict, Annotated, Dict, Any 
-from langgraph.graph import StateGraph, END 
+from pathlib import Path
+from typing import TypedDict, Dict, Any
+from langgraph.graph import StateGraph, END
 
 
-# LangGraph 상태 정의
-# (클래스 밖에 정의하여 그래프 전체에서 공유)
+# ============================================================
+# 1️⃣ LangGraph 상태 정의 (State)
+# ============================================================
 class FundAgentState(TypedDict):
     fund_data_path: str
     fund_analysis_result: dict
 
 
-# '전역' 프롬프트 템플릿
+# ============================================================
+# 2️⃣ LLM 프롬프트 템플릿
+# ============================================================
 FUND_ANALYST_PROMPT = """
 [Persona]
 당신은 최고의 펀드 상품 분석가(FundAnalyst)입니다. 특히 금융 초보자에게 복잡한 상품을 매우 쉽고 명확하게 설명하는 데 특화되어 있습니다.
@@ -49,37 +52,30 @@ FUND_ANALYST_PROMPT = """
 </analysis_result>
 """
 
-# LangGraph 노드 클래스 정의
-class FundAgentNode:
 
+# ============================================================
+# 3️⃣ FundAgentNode 클래스 정의
+# ============================================================
+class FundAgentNode:
     def __init__(self):
-        """
-        클래스가 생성될 때 LLM, 프롬프트, 체인을 한 번만 초기화합니다.
-        """
         print("--- FundAgentNode 초기화 ---")
         try:
-            # LLM 정의
-            self.llm = ChatOllama(model="qwen3:8b") 
-            print("--- 8. 로컬 Ollama (qwen3:8b) 모델 로드 성공 ---")
+            self.llm = ChatOllama(model="qwen3:8b")
+            print("--- ✅ 로컬 Ollama 모델(qwen3:8b) 로드 성공 ---")
         except Exception as e:
-            print(f"Ollama 모델 로드 중 오류 발생: {e}")
-            print("Ollama 데스크탑 앱이 실행 중인지, 'ollama pull qwen3:8b'가 완료되었는지 확인하세요.")
-            exit() 
+            print(f"❌ Ollama 모델 로드 실패: {e}")
+            print("⚠️ 'ollama pull qwen3:8b' 명령으로 모델을 설치하세요.")
+            exit()
 
-        # 프롬프트 템플릿 정의
+        # 프롬프트 템플릿과 체인 구성
         self.prompt_template = ChatPromptTemplate.from_template(FUND_ANALYST_PROMPT)
-
-        # 체인 생성
         self.chain = self.prompt_template | self.llm | StrOutputParser() | self._parse_analysis_result
-        
-        print("--- LLM 체인 구성 완료 ---")
+        print("--- ✅ LLM 체인 구성 완료 ---")
 
-    # '파서'를 클래스 내부 메서드로 정의
+    # ----------------------------------------------------------
+    # 🔹 LLM 결과 파싱
+    # ----------------------------------------------------------
     def _parse_analysis_result(self, llm_output: str):
-        """
-        LLM의 출력이 <analysis_result>, ```json (백틱),
-        '''json (작은따옴표) 등 어떤 형식이든 처리하는 파서
-        """
         try:
             if "```json" in llm_output:
                 result_str = llm_output.split("```json")[1].split("```")[0].strip()
@@ -87,92 +83,81 @@ class FundAgentNode:
                 result_str = llm_output.split("'''json")[1].split("'''")[0].strip()
             elif "<analysis_result>" in llm_output:
                 result_str = llm_output.split("<analysis_result>")[1].split("</analysis_result>")[0].strip()
-            elif llm_output.strip().startswith('{') and llm_output.strip().endswith('}'):
-                 result_str = llm_output.strip()
+            elif llm_output.strip().startswith("{") and llm_output.strip().endswith("}"):
+                result_str = llm_output.strip()
             else:
-                 raise ValueError("LLM의 출력에서 유효한 JSON 마커(```, ''', <>)를 찾지 못했습니다.")
+                raise ValueError("LLM의 출력에서 유효한 JSON 형식을 찾지 못했습니다.")
             return json.loads(result_str)
         except Exception as e:
-            print(f"--- 파싱 오류 ---")
-            print(f"LLM 원본 출력 (파싱 전): {llm_output}")
-            print(f"오류 내용: {e}")
-            return {"error": "분석 결과 파싱에 실패했습니다."}
+            print(f"⚠️ 파싱 실패: {e}")
+            print(f"LLM 원본 출력:\n{llm_output}")
+            return {"error": "분석 결과 파싱 실패"}
 
-    # LangGraph 노드 실행 함수
+    # ----------------------------------------------------------
+    # 🔹 LangGraph 노드 실행 함수
+    # ----------------------------------------------------------
     def run(self, state: FundAgentState):
-        """
-        이 함수가 LangGraph에 '노드'로 등록될 실제 실행 함수입니다.
-        """
-        print("--- [노드 시작] '펀드 분석 노드' 실행 ---")
-        
-        # State에서 파일 경로 입력 받기 추후 DB끌어오는 걸로 수정
-        file_path = state['fund_data_path']
+        print("\n--- [노드 시작] '펀드 분석 노드' 실행 ---")
 
-        # 파일 로드
+        # ✅ 안전하게 파일 경로 확인 및 기본 경로 설정
+        file_path = state.get("fund_data_path")
+        if not file_path or not os.path.exists(file_path):
+            print("⚠️ fund_data_path가 전달되지 않았거나 존재하지 않습니다. 기본 경로를 사용합니다.")
+            file_path = "/Users/yoodongseok/Desktop/WooriAgent/agent/fund_data.json"
+
+        # ✅ 파일 로드
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 raw_fund_data = json.load(f)
-            print(f"--- 9. {file_path} 파일 로드 성공 ---")
+            print(f"--- ✅ 펀드 데이터 로드 성공: {file_path} ---")
         except FileNotFoundError:
-            print(f"오류: {file_path} 파일을 찾을 수 없습니다.")
+            print(f"❌ 파일을 찾을 수 없습니다: {file_path}")
             return {"fund_analysis_result": {"error": f"File not found: {file_path}"}}
         except json.JSONDecodeError:
-            print(f"오류: {file_path} 파일이 올바른 JSON 형식이 아닙니다.")
-            return {"fund_analysis_result": {"error": f"JSON decode error in file: {file_path}"}}
+            print(f"❌ JSON 형식 오류: {file_path}")
+            return {"fund_analysis_result": {"error": f"Invalid JSON: {file_path}"}}
         except Exception as e:
-            print(f"파일 로드 중 오류 발생: {e}")
-            return {"fund_analysis_result": {"error": f"File loading error: {e}"}}
+            print(f"❌ 파일 로드 중 오류 발생: {e}")
+            return {"fund_analysis_result": {"error": str(e)}}
 
-        # LLM 입력 데이터 가공
-        print("--- 펀드 분석 에이전트 실행 (로컬 PC로 연산 중...) ---")
+        # ✅ LLM 입력 데이터 준비
+        print("--- 펀드 데이터 분석 시작 ---")
         fund_data_str = json.dumps(raw_fund_data, indent=2, ensure_ascii=False)
 
-        # .invoke()를 사용하여 체인 실행 (클래스 내부 체인 호출)
+        # ✅ LLM 체인 실행
         analysis_result = self.chain.invoke({"input_data": fund_data_str})
 
         print("--- [노드 종료] '펀드 분석 노드' 완료 ---")
-        
-        # State 업데이트 (반환)
         return {"fund_analysis_result": analysis_result}
 
 
-# 4단계: (실행) 그래프 정의 및 호출 (VS Code 로컬 실행용)
-
+# ============================================================
+# 4️⃣ VS Code 로컬 실행 (단독 테스트용)
+# ============================================================
 if __name__ == "__main__":
-    
-    # 클래스를 인스턴스화
     fund_agent_node = FundAgentNode()
 
-    # 그래프 정의
+    # 그래프 구성
     workflow = StateGraph(FundAgentState)
-
-    # 노드 추가 (클래스의 run 메서드를 등록)
     workflow.add_node("analyze_funds", fund_agent_node.run)
-
-    # 엣지 추가
     workflow.set_entry_point("analyze_funds")
     workflow.add_edge("analyze_funds", END)
-
-    # 그래프 컴파일
     app = workflow.compile()
 
-    # 파일 경로 설정
-    current_script_path = Path(__file__).resolve()
-    project_root = current_script_path.parents[2] 
-    file_path_to_run = project_root / 'fund_data.json'
+    # 절대경로 지정 ✅
+    file_path_to_run = "/Users/yoodongseok/Desktop/WooriAgent/fund_data.json"
 
-    # 그래프의 '초기 상태' 정의
+    # 초기 상태 정의 ✅
     initial_state = {
-        "fund_data_path": str(file_path_to_run), 
-        "fund_analysis_result": {}
+        "fund_data_path": file_path_to_run,
+        "fund_analysis_result": {},
     }
 
     print("\n--- 🏁 (LangGraph) 펀드 분석 그래프 실행 시작 🏁 ---")
-    
-    # 4-8. 그래프 실행
+    print(f"🔹 입력 경로: {file_path_to_run}")
+
+    # 그래프 실행
     final_state = app.invoke(initial_state)
 
-    # 4-9. 최종 결과 출력
     print("\n--- 🏁 (LangGraph) 그래프 실행 완료 🏁 ---")
-    print("최종 분석 결과 (JSON):")
-    print(json.dumps(final_state['fund_analysis_result'], indent=2, ensure_ascii=False))
+    print(json.dumps(final_state["fund_analysis_result"], indent=2, ensure_ascii=False))

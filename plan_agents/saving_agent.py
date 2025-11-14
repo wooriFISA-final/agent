@@ -2,44 +2,48 @@ import pandas as pd
 import json
 import re
 import time
+import os
+from pathlib import Path
+from typing import TypedDict, Dict, Any
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-import os
-from pathlib import Path 
-import operator
-from typing import TypedDict, Annotated, Dict, Any
 from langgraph.graph import StateGraph, END
 
 
-# 1단계: LangGraph 상태(State) 정의
-# (클래스 밖에 정의하여 그래프 전체에서 공유)
+# ============================================================
+# 1️⃣ LangGraph 상태 정의 (State)
+# ============================================================
 class SavingsAgentState(TypedDict):
     user_data: Dict[str, Any]
     csv_file_path: str
     savings_recommendations: dict
 
 
-# 2단계: '전역' 프롬프트 템플릿 정의
-# (상수이므로 클래스 외부에 두는 것이 깔끔합니다)
+# ============================================================
+# 2️⃣ LLM 프롬프트 템플릿 (전역 상수)
+# ============================================================
 SAVINGS_SUMMARY_PROMPT = """
 [Persona]
 당신은 최고의 예/적금 상품 분석가(SavingsAgent)입니다. 초보자에게 상품의 핵심 특징을 요약하는 데 특화되어 있습니다.
+
 [Task]
 - Python이 이미 선별한 [Top 3 예금 목록]과 [Top 3 적금 목록]을 입력받습니다.
-- 각 상품의 'description'을 분석하여, **금융 초보자**가 이해하기 쉬운 **"summary_for_beginner" (한 줄 요약)**를 생성합니다.
+- 각 상품의 'description'을 분석하여, **금융 초보자**가 이해하기 쉬운 **"summary_for_beginner" (한 줄 요약)**을 생성합니다.
 - (중요) 입력받은 상품 목록 구조에 'summary_for_beginner' 키(key)만 추가하여 전체 JSON을 [Output Format]에 맞춰 반환합니다.
+
 [Instructions]
 1. [Top 3 예금 목록]을 확인합니다.
 2. 각 예금 상품의 'description'을 읽고, 'summary_for_beginner'를 생성합니다.
 3. [Top 3 적금 목록]에 대해 2번 과정을 동일하게 반복합니다.
 4. 모든 분석 결과를 지정된 [Output Format]에 맞춰 정확하게 반환합니다.
 5. (주의!) 입력받은 데이터(name, max_rate 등)를 절대 변경하지 말고, 'summary_for_beginner' 필드만 추가하세요.
+
 [Inputs]
-(Python이 필터링한 JSON 데이터를 받습니다)
 Top 3 예금 목록: {input_top_3_deposits}
 Top 3 적금 목록: {input_top_3_savings}
-[Output Format (Return this)]
+
+[Output Format]
 <analysis_result>
 {{
   "top_deposits": [
@@ -64,82 +68,67 @@ Top 3 적금 목록: {input_top_3_savings}
 </analysis_result>
 """
 
-# LangGraph '노드' 클래스 정의
 
+# ============================================================
+# 3️⃣ SavingAgentNode 클래스 정의
+# ============================================================
 class SavingAgentNode:
-    
+
     def __init__(self):
-        """
-        클래스가 생성될 때 LLM, 프롬프트, 체인을 '한 번만' 초기화합니다.
-        """
         print("--- SavingAgentNode 초기화 ---")
         try:
-            # LLM 정의
             self.llm = ChatOllama(model="qwen3:8b")
-            print("--- 8. 로컬 Ollama (qwen3:8b) 모델 로드 성공 ---") 
+            print("--- ✅ 로컬 Ollama 모델(qwen3:8b) 로드 성공 ---")
         except Exception as e:
-            print(f"Ollama 모델 로드 중 오류 발생: {e}")
-            print("Ollama 데스크탑 앱이 실행 중인지, 'ollama pull qwen3:8b'가 완료되었는지 확인하세요.")
-            exit() 
-        
-        # 프롬프트 템플릿 정의
+            print(f"❌ Ollama 모델 로드 중 오류: {e}")
+            print("⚠️ Ollama 앱이 실행 중인지, 'ollama pull qwen3:8b'가 완료되었는지 확인하세요.")
+            exit()
+
+        # 프롬프트 체인 구성
         self.prompt_template = ChatPromptTemplate.from_template(SAVINGS_SUMMARY_PROMPT)
-
-        # 체인 생성 (파서 함수를 클래스 메서드로 참조)
         self.chain = self.prompt_template | self.llm | StrOutputParser() | self._parse_analysis_result
-        
-        print("--- LLM 체인 구성 완료 ---")
+        print("--- ✅ LLM 체인 구성 완료 ---")
 
-    # 도구 (Python 필터링)를 클래스 내부 메서드로 정의
+    # ----------------------------------------------------------
+    # 🔹 CSV 로드 & 필터링 로직
+    # ----------------------------------------------------------
     def _load_and_filter_products(self, user_data, csv_path):
-        """
-        (CSV 버전) 'saving_data.csv'를 로드하고,
-        가정된 사용자 데이터(MyData)로 '우대 조건'을 '필터링'하여
-        최적의 예금/적금 상품 Top 3를 각각 반환하는 '도구'입니다.
-        """
-        print(f"--- '필터링 도구' 실행: {user_data['user_id']}님 맞춤 상품 필터링 ---")
+        print(f"--- [필터링 도구] 실행: {user_data.get('user_id', 'Unknown')}님 맞춤 상품 필터링 ---")
 
         try:
             all_products_df = pd.read_csv(csv_path)
         except Exception as e:
-            print(f"CSV 로드 중 오류 발생: {e}")
+            print(f"❌ CSV 로드 실패 ({csv_path}): {e}")
             return {"deposits": pd.DataFrame(), "savings": pd.DataFrame()}
 
         # 필터링 로직
         deposits_df = all_products_df[all_products_df['product_type'] == '예금'].copy()
-        deposits_df = deposits_df[deposits_df['condition_min_age'] <= user_data['age']]
-        if not user_data['is_first_customer']:
+        deposits_df = deposits_df[deposits_df['condition_min_age'] <= user_data.get('age', 0)]
+        if not user_data.get('is_first_customer', True):
             deposits_df = deposits_df[deposits_df['condition_first_customer'] == False]
-        period = user_data['period_goal_months']
+        period = user_data.get('period_goal_months', 12)
         deposits_df = deposits_df[
-            (deposits_df['min_term'] <= period) &
-            (deposits_df['max_term'] >= period)
+            (deposits_df['min_term'] <= period) & (deposits_df['max_term'] >= period)
         ]
         top_3_deposits = deposits_df.sort_values(by='max_rate', ascending=False).head(3)
 
         savings_df = all_products_df[all_products_df['product_type'] == '적금'].copy()
-        savings_df = savings_df[savings_df['condition_min_age'] <= user_data['age']]
-        if not user_data['is_first_customer']:
+        savings_df = savings_df[savings_df['condition_min_age'] <= user_data.get('age', 0)]
+        if not user_data.get('is_first_customer', True):
             savings_df = savings_df[savings_df['condition_first_customer'] == False]
         savings_df = savings_df[
-            (savings_df['min_term'] <= period) &
-            (savings_df['max_term'] >= period)
+            (savings_df['min_term'] <= period) & (savings_df['max_term'] >= period)
         ]
         top_3_savings = savings_df.sort_values(by='max_rate', ascending=False).head(3)
 
-        print("--- '필터링 도구' 실행 완료: 최적 상품 선별 완료 ---")
+        print("--- ✅ 상품 필터링 완료 (예금/적금 Top3 선별) ---")
 
-        return {
-            "deposits": top_3_deposits,
-            "savings": top_3_savings
-        }
+        return {"deposits": top_3_deposits, "savings": top_3_savings}
 
-    # 파서를 클래스 내부 메서드로 정의
+    # ----------------------------------------------------------
+    # 🔹 LLM 분석 결과 파서
+    # ----------------------------------------------------------
     def _parse_analysis_result(self, llm_output: str):
-        """
-        LLM의 출력이 <analysis_result>, ```json (백틱),
-        '''json (작은따옴표) 등 어떤 형식이든 처리하는 파서
-        """
         try:
             if "```json" in llm_output:
                 result_str = llm_output.split("```json")[1].split("```")[0].strip()
@@ -147,97 +136,81 @@ class SavingAgentNode:
                 result_str = llm_output.split("'''json")[1].split("'''")[0].strip()
             elif "<analysis_result>" in llm_output:
                 result_str = llm_output.split("<analysis_result>")[1].split("</analysis_result>")[0].strip()
-            elif llm_output.strip().startswith('{') and llm_output.strip().endswith('}'):
-                 result_str = llm_output.strip()
+            elif llm_output.strip().startswith("{") and llm_output.strip().endswith("}"):
+                result_str = llm_output.strip()
             else:
-                 raise ValueError("LLM의 출력에서 유효한 JSON 마커(```, ''', <>)를 찾지 못했습니다.")
+                raise ValueError("LLM 출력에서 유효한 JSON 구간을 찾지 못했습니다.")
             return json.loads(result_str)
         except Exception as e:
-            print(f"--- 파싱 오류 ---")
-            print(f"LLM 원본 출력 (파싱 전): {llm_output}")
-            print(f"오류 내용: {e}")
-            return {"error": "분석 결과 파싱에 실패했습니다."}
+            print(f"⚠️ 파싱 실패: {e}")
+            print(f"LLM 원본 출력:\n{llm_output}")
+            return {"error": "분석 결과 파싱 실패"}
 
-    # LangGraph 노드 실행 함수
+    # ----------------------------------------------------------
+    # 🔹 LangGraph 노드 실행 함수
+    # ----------------------------------------------------------
     def run(self, state: SavingsAgentState):
-        """
-        이 함수가 LangGraph에 '노드'로 등록될 실제 실행 함수입니다.
-        """
-        print("--- [노드 시작] '예/적금 추천 노드' 실행 ---")
+        print("\n--- [노드 시작] 예/적금 추천 노드 실행 ---")
 
-        # State에서 입력 받기
-        user_data = state['user_data']
-        csv_path = state['csv_file_path']
+        user_data = state.get("user_data", {})
+        csv_path = state.get("csv_file_path")
 
-        # 도구 호출 (클래스 내부 메서드 호출)
+        # ✅ 안전 처리: csv_file_path가 없으면 기본 경로 사용
+        if not csv_path or not os.path.exists(csv_path):
+            print("⚠️ csv_file_path가 전달되지 않았거나 존재하지 않습니다. 기본 파일로 대체합니다.")
+            default_path = Path(__file__).resolve().parents[2] / "data" / "saving_data.csv"
+            csv_path = str(default_path)
+
+        # CSV 기반 상품 필터링
         recommendations = self._load_and_filter_products(user_data, csv_path)
 
-        # LLM 입력을 위한 데이터 가공
-        top_3_deposits_str = recommendations['deposits'].to_json(orient='records', force_ascii=False, indent=2)
-        top_3_savings_str = recommendations['savings'].to_json(orient='records', force_ascii=False, indent=2)
+        # JSON 문자열 변환
+        top_3_deposits_str = recommendations["deposits"].to_json(orient="records", force_ascii=False, indent=2)
+        top_3_savings_str = recommendations["savings"].to_json(orient="records", force_ascii=False, indent=2)
 
-        print("--- [노드] LLM 호출 (상품 '요약' 생성 중...) ---")
-
-        # LLM 체인 호출 (클래스 내부 체인 호출)
+        print("--- [노드] LLM 호출 중... (상품 요약 생성) ---")
         analysis_result = self.chain.invoke({
             "input_top_3_deposits": top_3_deposits_str,
-            "input_top_3_savings": top_3_savings_str
+            "input_top_3_savings": top_3_savings_str,
         })
 
-        print("--- [노드 종료] '예/적금 추천 노드' 완료 ---")
-
-        #  State 업데이트 (반환)
+        print("--- [노드 종료] 예/적금 추천 완료 ---")
         return {"savings_recommendations": analysis_result}
 
 
-# 4단계: (실행) 그래프 정의 및 호출 (VS Code 로컬 실행용)
-
+# ============================================================
+# 4️⃣ VS Code / 로컬 실행 진입점
+# ============================================================
 if __name__ == "__main__":
-    
-    # 클래스를 인스턴스화
     saving_agent_node = SavingAgentNode()
-    
-    # 그래프 정의
+
     workflow = StateGraph(SavingsAgentState)
-
-    # 노드 추가 (클래스의 'run' 메서드를 등록)
     workflow.add_node("recommend_savings", saving_agent_node.run)
-
-    # 엣지 추가
     workflow.set_entry_point("recommend_savings")
     workflow.add_edge("recommend_savings", END)
-
-    # 그래프 컴파일
     app = workflow.compile()
 
-    # 사용자의 MyData 가정
     user_data_input = {
         "user_id": "kim_woori",
         "age": 32,
         "is_first_customer": False,
-        "period_goal_months": 12
+        "period_goal_months": 12,
     }
 
-    # CSV 파일 경로 설정
     current_script_path = Path(__file__).resolve()
-    project_root = current_script_path.parents[2] 
-    file_path_to_run = project_root / 'saving_data.csv' 
+    project_root = current_script_path.parents[2]
+    csv_path = "/Users/yoodongseok/Desktop/WooriAgent/saving_data.csv"
 
-    # 그래프의 '초기 상태' 정의
     initial_state = {
         "user_data": user_data_input,
-        "csv_file_path": str(file_path_to_run), 
-        "savings_recommendations": {} 
+        "csv_file_path": str(csv_path),
+        "savings_recommendations": {},
     }
 
-    print(f"--- 9. 사용자 데이터 정의 완료: {user_data_input['user_id']}님 (나이: 32, 첫 고객 아님, 12개월 희망) ---")
-    print(f"--- 9-1. CSV 파일 경로: {file_path_to_run} ---")
-    print("\n--- 🏁 (LangGraph) 예/적금 추천 그래프 실행 시작 🏁 ---")
+    print(f"\n--- 🏁 예/적금 추천 그래프 실행 시작 ---")
+    print(f"CSV 경로: {csv_path}")
 
-    # 그래프 실행
     final_state = app.invoke(initial_state)
 
-    # 최종 결과 출력
-    print("\n--- 🏁 (LangGraph) 그래프 실행 완료 🏁 ---")
-    print("최종 추천 결과 (JSON):")
-    print(json.dumps(final_state['savings_recommendations'], indent=2, ensure_ascii=False))
+    print("\n--- 🏁 그래프 실행 완료 ---")
+    print(json.dumps(final_state["savings_recommendations"], indent=2, ensure_ascii=False))
