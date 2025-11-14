@@ -1,9 +1,9 @@
-# report_project/profit/execute.py
+# report_project/report/profit/execute.py
 
 from typing import Dict, Any
 import pandas as pd
-from state import AgentState 
-from .builder import build_profit_graph 
+from report.state import AgentState 
+from report.profit.builder import build_profit_graph # 🚨 [수정]
 
 
 def execute_profit_agent(initial_input: Dict[str, Any]) -> Dict[str, Any]:

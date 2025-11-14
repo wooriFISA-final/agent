@@ -1,62 +1,64 @@
+# report_project/report/nodes/llm_nodes.py
+
 import json
 import requests
 import pandas as pd
 import ollama
 from typing import Dict, Any
 
-# ⚠️ 주의: AgentState는 최상위 state.py에 정의되어야 하며, 여기서 상대 경로 import는 삭제합니다.
-# 실제 사용 시, 각 에이전트의 builder.py에서 state.py의 AgentState 또는 해당 에이전트의 State를 import하여 사용해야 합니다.
-# 여기서는 타입 힌트만 제공합니다.
-# from state import AgentState, ConsumptionAnalysisState # 이 줄은 통합 파일에서는 제외합니다.
-
 # ==============================================================================
 # 🛠️ 공통 Ollama 설정
 # ==============================================================================
-# 모든 LLM 노드가 Ollama 호출을 위해 공통적으로 사용합니다.
 OLLAMA_HOST = 'http://localhost:11434' 
 QWEN_MODEL = 'qwen3:8b'
-# compare 에이전트에서 사용된 방식:
-# from llm.ollama_llm import ollama_llm  # <--- 이 방식은 중앙 집중화 시 경로 문제로 인해 사용하지 않습니다. 
-                                        # 대신, 아래 함수들은 requests 또는 ollama.Client를 직접 사용합니다.
 
 
 # ==============================================================================
-# 1. 🔍 compare 에이전트용: 변동 사항 비교 및 요약 노드
+# 1. 🔍 compare 에이전트용: 변동 사항 비교 및 요약 노드 (RAG 기반)
 # ==============================================================================
 def compare_changes_node(state: Dict[str, Any]) -> Dict[str, Any]:
     print("🔍 변동 사항 비교 및 요약 시작...")
     
+    # 🚨 수정: policy_info에서 old_policy와 new_policy를 모두 가져옵니다.
     policy_data = state.get('policy_info', {})
-    old_policy_chapters = policy_data.get('old_policy', [])
-    new_policy_chapters = policy_data.get('new_policy', [])
+    old_policies = policy_data.get('old_policy', [])
+    new_policies = policy_data.get('new_policy', [])
     
-    # 1. 정책 내용을 문자열로 포맷팅
-    old_policy_text = "\n\n--- [구 버전 정책 (20241224) 장별 내용] ---\n"
-    for chapter in old_policy_chapters:
-        old_policy_text += f"[{chapter['title']}]\n{chapter['content'][:200]}...\n" # 200자 제한
+    # 1. 검색된 청크 내용을 문자열로 포맷팅
+    context_text = "\n\n--- [RAG 검색 결과: 정책 변동 컨텍스트] ---\n"
     
-    new_policy_text = "\n\n--- [신 버전 정책 (20250305) 장별 내용] ---\n"
-    for chapter in new_policy_chapters:
-        new_policy_text += f"[{chapter['title']}]\n{chapter['content'][:200]}...\n" # 200자 제한
+    # 🚨 [수정 핵심] old_policies (문자열 리스트) 내용 포맷팅
+    if old_policies:
+        context_text += "--- 이전 정책 (20241224) 청크 ---\n"
+        for i, content in enumerate(old_policies):
+            # content는 문자열이므로, .get() 대신 직접 사용합니다.
+            context_text += f"[이전 정책 청크 {i+1}]\n내용: {content[:300]}...\n---\n" 
+    
+    # 🚨 [수정 핵심] new_policies (문자열 리스트) 내용 포맷팅
+    if new_policies:
+        context_text += "\n--- 신규 정책 (20250305) 청크 ---\n"
+        for i, content in enumerate(new_policies):
+            # content는 문자열이므로, .get() 대신 직접 사용합니다.
+            context_text += f"[신규 정책 청크 {i+1}]\n내용: {content[:300]}...\n---\n"
+    
+    if not old_policies and not new_policies:
+        context_text += "정책 변동 분석을 위한 검색 결과가 없습니다."
 
 
     prompt = f"""
-    당신은 금융 정책 비교 분석가입니다. 아래 제공된 두 버전의 정책을 [장 제목] 기준으로 비교하십시오.
+    당신은 금융 정책 비교 분석가입니다. 아래 제공된 [RAG 검색 결과 컨텍스트] 텍스트만 사용하여 분석을 수행하십시오. 이 컨텍스트에는 2024년 12월 버전과 2025년 3월 버전의 정책 조항들이 포함되어 있습니다.
     
     [핵심 임무: 오직 변경점만 추출]
     1. **두 정책의 모든 [장 제목]을 대조**하여, **신규 정책(20250305)에서 변경되거나 새롭게 추가된 내용**만을 간결하고 명확하게 요약하여 보고하십시오.
     2. 변경이 없는 내용은 언급하지 않습니다.
     3. 정책 파일 로드에 실패했다면 (내용에 '정책 파일 로드 실패' 포함) 해당 사실을 명시하고 분석을 중단하십시오.
     
-    [정책 비교 데이터]
-    {old_policy_text}
+    {context_text}
     
-    {new_policy_text}
-    
-    [이전 달 재무/환경 데이터 - 정책 영향 분석 참고용]
-    - 이전 달 보고서: {state.get('report_data')}
-    - 현재 주택 정보: {state.get('house_info')}
-    - 현재 신용 정보: {state.get('credit_info')}
+    [이전 달 재무/환경 데이터 - 분석 참고용]
+    - 이전 달 보고서: {state.get('report_data', 'N/A')}
+    - 현재 주택 정보: {state.get('house_info', 'N/A')}
+    - 현재 신용 정보: {state.get('credit_info', 'N/A')}
     """
     
     # 🚨 Ollama 호출 로직 (타임아웃 180초로 설정)
@@ -74,7 +76,8 @@ def compare_changes_node(state: Dict[str, Any]) -> Dict[str, Any]:
         response_content = res.json()['response'].strip()
         print("✅ [LLM Node] 변동 사항 비교 요약 완료")
     except requests.exceptions.RequestException as e:
-        print(f"❌ [LLM Node] Ollama 통신 오류: {e}")
+        response_content = f"❌ [LLM Node] Ollama 통신 오류: {e}. Ollama 서버(http://localhost:11434)와 모델({QWEN_MODEL}) 상태를 확인하세요."
+        print(response_content)
     
     state["comparison_result"] = response_content
     return state
@@ -205,9 +208,3 @@ def analyze_investment_results_node(state: Dict[str, Any]) -> Dict[str, Any]:
     
     state['investment_analysis_result'] = llm_analysis_result
     return state
-
-# LLM이 필요한 노드 함수:
-# - compare_changes_node
-# - generate_final_report_node
-# - analyze_investment_results_node
-# - generate_visualization_data (profit 에이전트 데이터 전처리용)

@@ -1,12 +1,15 @@
-# report_project/consume/builder.py
+# report_project/report/consume/builder.py
 
 from langgraph.graph import StateGraph, END
-# 최상위 state.py에서 AgentState를 import 합니다.
-from state import AgentState 
-from nodes.tool_nodes import (
+from typing import Dict, Any, Literal
+import pandas as pd # pandas import 추가 (필요시)
+
+# 🚨 [수정] 모든 상대 경로를 'report.' 절대 경로로 변경
+from report.state import AgentState 
+from report.nodes.tool_nodes import (
     get_user_cluster_node, generate_cluster_nickname_node, analyze_user_spending_node
 )
-from nodes.llm_nodes import generate_final_report_node
+from report.nodes.llm_nodes import generate_final_report_node
 
 
 # ⚠️ 시각화 함수는 그래프 로직 외부(execute.py 또는 main_orchestrator.py)에서 호출하는 것이 권장되므로, 

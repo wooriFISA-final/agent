@@ -1,14 +1,14 @@
-# report_project/compare/builder.py (LangGraph 정의 수정)
+# report_project/report/compare/builder.py
 
 from langgraph.graph import StateGraph, END
 from typing import Dict, Any, Literal
-from state import AgentState 
-from nodes.tool_nodes import (
+from report.state import AgentState 
+from report.nodes.tool_nodes import (
     load_prev_month_report, load_house_info, load_policy_info, load_credit_info
 )
-from nodes.llm_nodes import compare_changes_node # compare_changes 노드
+from report.nodes.llm_nodes import compare_changes_node 
 
-# 🚨 [신규 추가] 정책 로드 성공 여부를 판단하는 라우팅 함수
+# 정책 로드 성공 여부를 판단하는 라우팅 함수
 def check_policy_load_status(state: Dict[str, Any]) -> Literal["compare_changes", "fail_and_end"]:
     """정책 데이터가 비어 있는지 확인하여 LLM 분석 단계를 결정합니다."""
     
@@ -40,17 +40,21 @@ def build_compare_graph():
     workflow.add_node("load_credit_info", load_credit_info)
     workflow.add_node("compare_changes", compare_changes_node) # LLM 노드
 
-    # 2. 실행 순서 정의 (데이터 로드 병렬 및 순차)
-    workflow.set_entry_point("load_prev_month_report")
+    # 2. 실행 순서 정의 (RAG 테스트를 위해 진입점 변경)
     
-    # 순차적 데이터 로드
-    workflow.add_edge("load_prev_month_report", "load_house_info")
-    workflow.add_edge("load_house_info", "load_policy_info")
+    # 🚨 [수정 핵심] 진입점을 'load_policy_info' (RAG 로직 포함)로 변경
+    workflow.set_entry_point("load_policy_info")
+    
+    # 기존 데이터 로드 엣지들은 제거되거나 주석 처리됩니다. (노드 우회)
+    # workflow.add_edge("load_prev_month_report", "load_house_info")
+    # workflow.add_edge("load_house_info", "load_policy_info") 
+    
+    # load_policy_info 이후의 엣지는 유지
     workflow.add_edge("load_policy_info", "load_credit_info")
     
-    # 🚨 [수정] 정책 로드 후 성공 여부에 따라 분기 처리
+    # 정책 로드 후 성공 여부에 따라 분기 처리
     workflow.add_conditional_edges(
-        "load_credit_info", # 모든 데이터 로드가 완료된 후 정책 상태 확인
+        "load_credit_info", 
         check_policy_load_status,
         {
             "compare_changes": "compare_changes",

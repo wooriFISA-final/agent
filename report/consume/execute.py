@@ -1,11 +1,12 @@
-# report_project/consume/execute.py
+# report_project/report/consume/execute.py
 
 import pandas as pd
 import pickle
 import sys
 from typing import Dict, Any, Optional
-from state import AgentState, ModelAssets 
-from .builder import build_consume_graph 
+# 🚨 [수정] 모든 상대 경로를 'report.' 절대 경로로 변경
+from report.state import AgentState, ModelAssets 
+from report.consume.builder import build_consume_graph # ⬅️ 수정
 
 # ----------------------------------------------------------------------
 # 1. 자산 로드 로직 (TEST MODE만 사용)
