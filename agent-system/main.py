@@ -1,8 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from contextlib import asynccontextmanager
+import asyncio
 
 from agents.registry.agent_registry import AgentRegistry
 from core.logging.logger import setup_logger
@@ -10,46 +11,57 @@ from graph.builder.graph_builder import GraphBuilder
 from graph.schemas.state import LLMStateSchema
 from core.mcp.mcp_manager import MCPManager
 
-from langchain_core.messages import AIMessage
 logger = setup_logger()
 
 # =============================
 # Lifespan 이벤트 핸들러
 # =============================
+graph = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """앱 시작 및 종료 시 초기화 / 정리 작업"""
     global graph
 
     logger.info("🚀 Starting Multi-Agent System...")
 
-    # 1️⃣ MCP 클라이언트 초기화
-    mcp_manager = MCPManager()
-    mcp_manager.initialize(url="http://localhost:8888/mcp/")
+    # 1) MCP 단일 세션 초기화
+    mcp = MCPManager()
+    mcp.initialize("http://localhost:8888/mcp/")
 
-    # ✅ MCP 서버 연결
-    await mcp_manager.connect()
-    logger.info("✅ MCP Manager initialized and connected")
+    for attempt in range(5):
+        try:
+            await mcp.connect()
+            logger.info("🔗 MCP connected!")
+            break
+        except Exception:
+            await asyncio.sleep(2)
 
-    # 2️⃣ Agent 자동 검색 및 등록
+    # 2) Agent 자동 등록
     AgentRegistry.auto_discover("agents.implementations")
-    logger.info(f"✅ Registered agents: {AgentRegistry.list_agents()}")
 
-    # 3️⃣ 그래프 빌드
+    # 3) 그래프 생성
     builder = GraphBuilder(LLMStateSchema)
-    builder.add_agent_node("user_regri", "user_registration") \
-        .set_entry_point("user_regri") \
-        .set_finish_point("user_regri")
-
+    builder.add_agent_node("user_reg", "user_registration")\
+        .set_entry_point("user_reg")\
+        .set_finish_point("user_reg")
     graph = builder.build()
-    logger.info("✅ Agent graph built successfully")
 
-    # startup 완료 후 제어권 반환
     yield
 
-    # shutdown 시 처리 (예: MCP 연결 종료)
-    await mcp_manager.close()
-    logger.info("🧹 MCP connection closed. Application shutdown complete.")
+    # 종료
+    await mcp.close()
+    logger.info("🧹 MCP closed.")
+
+
+app = FastAPI(title="Multi-Agent Planner", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # =============================
@@ -91,6 +103,26 @@ async def root():
     }
 
 
+@app.get("/health")
+async def health_check():
+    """MCP 연결 상태 확인"""
+    try:
+        mcp = MCPManager()
+        await mcp.ensure_connected()
+        tools = await mcp.list_tools()
+        return {
+            "status": "healthy",
+            "mcp_connected": True,
+            "available_tools": len(tools)
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "mcp_connected": False,
+            "error": str(e)
+        }
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     """
@@ -118,20 +150,27 @@ async def chat_endpoint(request: ChatRequest):
         # 응답 추출
         final_response = result.get("messages")
 
-        logger.info(f"최종 응답 결과 포멧 : {final_response}")
+        logger.info(f"최종 응답 결과 포맷: {final_response}")
         if not final_response:
             logger.warning("⚠️ No response generated")
             return ChatResponse(response="응답을 생성할 수 없습니다.")
 
-        # # 메시지 리스트를 문자열로 변환
-        # if isinstance(final_response, list):
-        #     final_response = " ".join(map(str, final_response))
-
-        logger.info(f"✅ Response generated: {final_response[:100]}...")
-        return ChatResponse(response=final_response[AIMessage])
+        logger.info(f"✅ Response generated: {final_response[:100] if isinstance(final_response, str) else 'List'}...")
+        
+        # AI 메시지 추출
+        ai_messages = [m for m in final_response if isinstance(m, AIMessage)]
+        if not ai_messages:
+            return ChatResponse(response="AI 응답이 없습니다.")
+        
+        return ChatResponse(response=ai_messages[-1].content)
 
     except Exception as e:
         logger.error(f"❌ Chat processing failed: {e}", exc_info=True)
+        
+        # MCP 연결 오류인 경우 명확한 메시지 반환
+        if "mcp" in str(e).lower() or "connection" in str(e).lower():
+            return ChatResponse(response="MCP 서버와의 연결에 문제가 있습니다. 잠시 후 다시 시도해주세요.")
+        
         return ChatResponse(response=f"오류가 발생했습니다: {str(e)}")
 
 
