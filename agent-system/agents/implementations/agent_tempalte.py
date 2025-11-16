@@ -1,15 +1,15 @@
 import logging
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage
-from agents.base.agent_base import AgentBase, BaseAgentConfig, AgentState
+from agents.base.agent_base import AgentBase, BaseAgentConfig,AgentState
 from agents.registry.agent_registry import AgentRegistry
 from core.llm.llm_manger import LLMManager
 
+#log 설정
 logger = logging.getLogger("agent_system")
 
-
-@AgentRegistry.register("user_registration")
-class UserRegistrationAgent(AgentBase):
+@AgentRegistry.register("template_agent")
+class TemplateAgent(AgentBase):
     """
     사용자 등록 자동화 Agent
     
@@ -21,7 +21,7 @@ class UserRegistrationAgent(AgentBase):
     - get_system_prompt(): 도구 선택 프롬프트
     - validate_input(): 입력 검증
     """
-
+    # Agent의 초기화
     def __init__(self, config: BaseAgentConfig):
         super().__init__(config)
         #추후에 수정 예정
@@ -30,7 +30,7 @@ class UserRegistrationAgent(AgentBase):
             model=config.model_name
         )
         #사용 가능한 Tool 목록
-        self.allowed_tools = ["create_user", "get_user"]
+        self.allowed_tools = []
 
     # 전처리: 입력 데이터 
     def validate_input(self, state: Dict[str, Any]) -> bool:
@@ -54,44 +54,14 @@ class UserRegistrationAgent(AgentBase):
         """
         # 기본: 아무것도 하지 않음
         return state
-    # =============================
-    # 구체적인 Agent의 역할 정의 (단 1개!)
+    
+        # =============================
+    # 구체적인 Agent의 역할 정의
     # =============================
     def get_agent_role_prompt(self) -> str:
         """
-        UserManagementAgent의 역할 정의
+        Agent의 역할 정의
         
         이 Prompt 하나로 Agent의 모든 행동 원칙이 결정됨
         """
-        return """당신은 사용자 관리 전문 Agent입니다.
-
-**[당신의 정체성]**
-사용자 계정 생성, 조회 관리를 담당하는 전문가입니다.
-
-**[당신의 업무]**
-다음과 같은 사용자 관리 작업을 수행합니다:
-- 사용자 정보 조회 
-- 새로운 사용자 등록
-
-**[행동 원칙]**
-
-1. **정확성 우선:**
-   - 사용자 식별 시 이름, 나이를 정확히 확인
-
-2. **작업 순서:**
-   - 조회는 유저 생성 이후에만 가능하다.
-
-3. **안전 검증:**
-   - 삭제 작업은 되돌릴 수 없으므로 신중히 진행
-   - 권한 변경 시 영향 범위 고려
-
-4. **사용자 친화적 응답:**
-   - 기술 용어보다는 이해하기 쉬운 표현 사용
-   - 작업 결과를 명확하고 간결하게 전달
-   - 민감 정보(비밀번호 등)는 절대 노출하지 않음
-
-5. **MCP Tool 활용:**
-   - 사용자의 요구를 분석하여 적절한 Tool 선택
-   - Tool 실행 결과를 바탕으로 다음 단계 판단
-   - 필요한 정보가 부족하면 사용자에게 요청
-"""
+        return """당신은 챗 Agent입니다. 현재까지의 작업을 요약하여 사용자에게 응답하세요."""

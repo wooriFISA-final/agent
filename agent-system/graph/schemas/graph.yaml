@@ -1,0 +1,22 @@
+entry_point: user_reg
+finish_point: user_reg
+
+nodes:
+  - name: user_reg
+    agent: user_registration
+    config:
+      model_name: "qwen3:8b"
+      max_iterations: 100
+      timeout: 300
+      
+  # - name: template_agent_node
+  #   agent: template_agent
+  #   config:
+  #     model_name: "qwen3:8b"
+  #     max_iterations: 5
+  #     timeout: 200
+
+# edges:
+#   - source: user_reg
+#     target: template_agent_node
+edges: []
