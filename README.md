@@ -1,7 +1,33 @@
-# agent
+# 🤖 Agent System
 
-Install it and run:
+Advanced modular agent system built with LangGraph.
+
+## 🚀 Quick Start
 
 ```bash
-uvicorn main:app --reload --port 8000 
+# Setup
+make setup
+
+# Run
+make run
+
+# Test
+make test
 ```
+
+## 📖 Documentation
+
+See `/docs` for detailed documentation.
+
+## 🏗️ Architecture
+
+```
+agents/ - Agent implementations
+graph/  - Graph builders and routing
+tools/  - Tool implementations
+core/   - Core utilities
+```
+
+## 📝 License
+
+MIT
