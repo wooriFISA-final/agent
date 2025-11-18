@@ -1,0 +1,5 @@
+"""System constants"""
+
+DEFAULT_TIMEOUT = 30
+DEFAULT_RETRIES = 3
+MAX_ITERATIONS = 100

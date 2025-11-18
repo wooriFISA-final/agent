@@ -331,4 +331,9 @@ pyrightconfig.json
 pyvenv.cfg
 pip-selfcheck.json
 
+# data
+*.json
+*.csv
+.env
+
 # End of https://www.toptal.com/developers/gitignore/api/pycharm,macos,python,venv
