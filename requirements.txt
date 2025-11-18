@@ -25,6 +25,7 @@ dotenv==0.9.9
 et_xmlfile==2.0.0
 executing==2.2.1
 fastapi==0.116.2
+fastapi-cors
 Flask==3.1.2
 fonttools==4.59.2
 frozenlist==1.7.0
