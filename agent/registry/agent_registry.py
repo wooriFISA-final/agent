@@ -58,16 +58,16 @@ class AgentRegistry:
     # 3️⃣ 패키지 자동 탐색 기능 개선
     # ------------------------------------
     @classmethod
-    def auto_discover(cls, package_name: str = "agent.implementations"):
+    def auto_discover(cls, module_path: str = "agent.implementations"):
         
         """
         지정된 패키지 내 모든 서브모듈에서 Agent 클래스 자동 등록
         ex) agent/implementations/research_agent.py 등
         """
         try:
-            package = importlib.import_module(package_name)
+            package = importlib.import_module(module_path)
         except ModuleNotFoundError:
-            logger.error(f"❌ 패키지 '{package_name}'를 찾을 수 없습니다.")
+            logger.error(f"❌ 패키지 '{module_path}'를 찾을 수 없습니다.")
             return
 
         # 서브모듈 재귀 탐색

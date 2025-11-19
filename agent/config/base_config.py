@@ -7,12 +7,30 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
 from langchain_core.messages import BaseMessage
-from langgraph.graph import add_messages  # ✅ 핵심 추가!
+from langgraph.graph import add_messages
 
 
 # ============================================================================
 # 1. 설정 (Config) - Agent의 불변 설정 정보
 # ============================================================================
+
+class LLMConfig(BaseModel):
+    """
+    Agent별 LLM 설정
+    
+    - 설정하지 않은 값은 전역 설정(settings)에서 가져옴
+    - Agent별로 다른 모델/온도 등을 사용 가능
+    """
+    model: Optional[str] = Field(None, description="LLM 모델명 (None이면 전역 설정 사용)")
+    temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="LLM Temperature")
+    max_tokens: Optional[int] = Field(None, ge=1, description="LLM Max Tokens")
+    base_url: Optional[str] = Field(None, description="Ollama 서버 URL")
+    timeout: Optional[int] = Field(None, ge=1, description="요청 타임아웃(초)")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """None이 아닌 값만 딕셔너리로 변환"""
+        return {k: v for k, v in self.dict().items() if v is not None}
+
 
 class BaseAgentConfig(BaseModel):
     """
@@ -40,13 +58,21 @@ class BaseAgentConfig(BaseModel):
     tags: List[str] = Field(default_factory=list, description="Agent 분류 태그")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="추가 메타데이터")
     
-    # llm 관리
-    model_name: str = Field(default="qwen3:8b", description="사용할 LLM 모델명")
-    # temperature: 0.7 = Field(default=0.7, ge=0.0, le=1.0, description="LLM Teperature 설정")
-    # top_p: float = Field(default=0.9, ge=0.0, le=1.0, description="LLM Top-p 설정")
-    # top_k: int = Field(default=40, ge=1, description="LLM Top-k 설정")
-    # penalty: float = Field(default=1.0, description="LLM Penalty 설정")
+    # LLM 설정 (Agent별 커스터마이징 가능)
+    llm_config: Optional[LLMConfig] = Field(None, description="Agent별 LLM 설정 (None이면 전역 설정 사용)")
     
+    def get_llm_config_dict(self) -> Dict[str, Any]:
+        """
+        Agent의 LLM 설정을 딕셔너리로 반환
+        
+        Returns:
+            None이 아닌 LLM 설정값들
+        """
+        if self.llm_config:
+            return self.llm_config.to_dict()
+        return {}
+
+
 # ============================================================================
 # 2. 실행 상태 (State) - Agent의 동적 실행 정보
 # ============================================================================
@@ -69,12 +95,12 @@ class AgentState(TypedDict, total=False):
     - TypedDict 기반으로 LangGraph State와 직접 호환
     - 실행 중 동적으로 변경되는 정보
     
-    ⚠️ 핵심 변경:
+    ⚠️ 핵심:
     messages 필드에 Annotated[List[BaseMessage], add_messages] 사용
     → LangGraph가 자동으로 메시지를 누적(append)함
     """
     # === 메시지 처리 (Reducer 적용!) ===
-    messages: Annotated[List[BaseMessage], add_messages]  # ✅ 핵심 수정!
+    messages: Annotated[List[BaseMessage], add_messages]
     
     # === 실행 메타데이터 ===
     session_id: str                          # 세션 ID

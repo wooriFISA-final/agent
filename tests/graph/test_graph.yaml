@@ -1,0 +1,12 @@
+# Test graph configuration for factory tests
+
+entry_point: user_reg_node
+
+nodes:
+  - name: user_reg_node
+    agent: TestUserRegistrationAgent
+    config:
+      model_name: "test-model"
+
+finish_points:
+  - user_reg_node

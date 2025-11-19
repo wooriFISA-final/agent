@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage, AIMessage
@@ -7,8 +7,10 @@ from langgraph.checkpoint.memory import MemorySaver
 import asyncio
 from typing import Optional
 
+# Centralized settings
+from core.config.setting import settings
 from agent.registry.agent_registry import AgentRegistry
-from agent.config.base_config import AgentState, StateBuilder, ExecutionStatus
+from agent.config.base_config import StateBuilder
 from core.logging.logger import setup_logger
 from graph.factory import mk_graph
 from core.mcp.mcp_manager import MCPManager
@@ -17,66 +19,87 @@ from utils.session_manager import SessionManager
 logger = setup_logger()
 
 # =============================
-# 전역 변수
+# Application State
 # =============================
-graph = None
-checkpointer = None
-session_manager: Optional[SessionManager] = None
-
+# Use a class to hold application state, attached to the FastAPI app instance.
+class AppState:
+    def __init__(self):
+        self.graph = None
+        self.checkpointer: Optional[MemorySaver] = None
+        self.session_manager: Optional[SessionManager] = None
+        self.mcp_manager: Optional[MCPManager] = None
 
 # =============================
-# Lifespan 이벤트 핸들러
+# Lifespan Event Handler
 # =============================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI 앱 생명주기 관리"""
-    global graph, checkpointer, session_manager
+    """FastAPI app startup and shutdown logic."""
+    logger.info(f"🚀 Starting Multi-Agent System (v{settings.API_VERSION}) in {settings.ENVIRONMENT} mode...")
+    
+    app.state = AppState()
 
-    logger.info("🚀 Starting Multi-Agent System...")
-
-    checkpointer = MemorySaver()
+    # 1. Initialize Checkpointer
+    app.state.checkpointer = MemorySaver()
     logger.info("✅ Global MemorySaver initialized")
 
-    session_manager = SessionManager(checkpointer)
+    # 2. Initialize SessionManager
+    app.state.session_manager = SessionManager(app.state.checkpointer)
     logger.info("✅ SessionManager initialized")
 
-    mcp = MCPManager()
-    mcp.initialize("http://localhost:8888/mcp/")
+    # 3. Initialize and connect to MCP
+    app.state.mcp_manager = MCPManager()
+    app.state.mcp_manager.initialize(str(settings.MCP_URL))
 
-    for attempt in range(1, 6):
+    for attempt in range(1, settings.MCP_CONNECTION_RETRIES + 1):
         try:
-            await mcp.connect()
+            await app.state.mcp_manager.connect()
             logger.info("✅ MCP connected successfully!")
             break
         except Exception as e:
-            logger.warning(f"⚠️  MCP connection attempt {attempt}/5 failed: {e}")
-            if attempt < 5:
-                await asyncio.sleep(2)
+            logger.warning(f"⚠️  MCP connection attempt {attempt}/{settings.MCP_CONNECTION_RETRIES} failed: {e}")
+            if attempt < settings.MCP_CONNECTION_RETRIES:
+                await asyncio.sleep(settings.MCP_CONNECTION_TIMEOUT)
             else:
-                logger.error("❌ Failed to connect to MCP after 5 attempts")
+                logger.error(f"❌ Failed to connect to MCP after {settings.MCP_CONNECTION_RETRIES} attempts")
                 raise
 
+    # 4. Discover and register agents
     logger.info("📦 Discovering agents...")
-    AgentRegistry.auto_discover()
+    AgentRegistry.auto_discover(module_path=settings.AGENTS_MODULE_PATH)
+
+    # 5. Discover and register routers
+    logger.info("🔍 Discovering routers...")
+    from graph.routing.router_registry import RouterRegistry
+    RouterRegistry.auto_discover()
     
-    logger.info("🔧 Building agent graph from YAML...")
-    graph = mk_graph("graph/schemas/graph.yaml", checkpointer=checkpointer)
-    if not graph:
+    # 6. Build the main agent graph
+    logger.info(f"🔧 Building agent graph from '{settings.GRAPH_YAML_PATH}'...")
+    app.state.graph = mk_graph(
+        yaml_path=str(settings.GRAPH_YAML_PATH),
+        checkpointer=app.state.checkpointer
+    )
+    if not app.state.graph:
         logger.error("❌ Agent graph could not be built. Shutting down.")
+        # In a real scenario, you might want to prevent the app from starting
         return
 
     logger.info("✅ Agent graph built successfully!")
+    logger.info("🎉 Application startup complete.")
 
     yield
 
+    # --- Shutdown Logic ---
     logger.info("🧹 Shutting down Multi-Agent System...")
-    await mcp.close()
-    logger.info("✅ MCP connection closed.")
+    if app.state.mcp_manager:
+        await app.state.mcp_manager.close()
+        logger.info("✅ MCP connection closed.")
+    logger.info("👋 Application shutdown complete.")
 
 
 app = FastAPI(
     title="Multi-Agent Planner",
-    version="2.1.0",
+    version=settings.API_VERSION,
     description="Multi-Agent system with conversation history",
     lifespan=lifespan
 )
@@ -106,7 +129,7 @@ class HealthResponse(BaseModel):
     mcp_connected: bool
     available_tools: int
     registered_agents: list
-    error: str = None
+    error: Optional[str] = None
 
 
 @app.get("/")
@@ -114,17 +137,18 @@ async def root():
     return {
         "status": "ok",
         "message": "AI Agent API is running 🚀",
-        "version": "2.1.0",
+        "version": settings.API_VERSION,
         "agents": AgentRegistry.list_agents(),
     }
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
+async def health_check(request: Request):
+    """Provides a health check of the system, including MCP connection."""
+    mcp_manager = request.app.state.mcp_manager
     try:
-        mcp = MCPManager()
-        await mcp.ensure_connected()
-        tools = await mcp.list_tools()
+        await mcp_manager.ensure_connected()
+        tools = await mcp_manager.list_tools()
         
         return HealthResponse(
             status="healthy",
@@ -144,257 +168,114 @@ async def health_check():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(request: Request, chat_request: ChatRequest):
     """
-    채팅 엔드포인트 (멀티턴 대화 지원)
-    
-    대화 기록 관리:
-    1. 같은 session_id면 이전 대화 자동 로드
-    2. LangGraph Checkpointer가 메시지 히스토리 관리
-    3. Agent는 전체 대화 컨텍스트를 받아서 처리
+    Handles chat requests, managing conversation history and invoking the agent graph.
     """
-    global graph
-
+    graph = request.app.state.graph
     if not graph:
         logger.error("❌ Agent graph not initialized")
         return ChatResponse(
-            response="시스템이 초기화되지 않았습니다.",
+            response="System is not initialized.",
             status="error",
             metadata={"error": "graph_not_initialized"}
         )
 
     try:
         logger.info(f"\n{'='*80}")
-        logger.info(f"📩 NEW REQUEST")
-        logger.info(f"   Message: {request.message}")
-        logger.info(f"   Session ID: {request.session_id}")
+        logger.info(f"📩 NEW REQUEST | Session: {chat_request.session_id}")
+        logger.info(f"   Message: {chat_request.message}")
         logger.info(f"{'='*80}")
 
-        graph_config = {
-            "configurable": {
-                "thread_id": request.session_id
-            }
-        }
+        graph_config = {"configurable": {"thread_id": chat_request.session_id}}
 
-        # ============================================
-        # 🔍 중요: 기존 대화 기록 확인
-        # ============================================
+        # Check for existing conversation state
         try:
             existing_state = await graph.aget_state(graph_config)
-            
-            if existing_state and existing_state.values:
-                existing_messages = existing_state.values.get('messages', [])
-                
-                if existing_messages:
-                    logger.info(f"📚 CONTINUING CONVERSATION")
-                    logger.info(f"   Previous messages: {len(existing_messages)}")
-                    
-                    # 🔍 디버깅: 이전 메시지 내용 출력
-                    logger.info(f"   Previous conversation:")
-                    for i, msg in enumerate(existing_messages[-5:], 1):  # 마지막 5개만
-                        msg_type = type(msg).__name__
-                        content_preview = msg.content[:50] if hasattr(msg, 'content') else str(msg)[:50]
-                        logger.info(f"      [{i}] {msg_type}: {content_preview}...")
-                    
-                    # ✅ 핵심: 새 메시지만 추가 (LangGraph가 자동으로 병합)
-                    input_state = {
-                        "messages": [HumanMessage(content=request.message)]
-                    }
-                    
-                    logger.info(f"   ✅ New message will be appended to existing {len(existing_messages)} messages")
-                else:
-                    logger.info(f"🆕 STARTING NEW CONVERSATION (empty history)")
-                    input_state = StateBuilder.create_initial_state(
-                        messages=[HumanMessage(content=request.message)],
-                        session_id=request.session_id,
-                        max_iterations=10
-                    )
-            else:
-                logger.info(f"🆕 STARTING NEW CONVERSATION (no state)")
-                input_state = StateBuilder.create_initial_state(
-                    messages=[HumanMessage(content=request.message)],
-                    session_id=request.session_id,
-                    max_iterations=10
-                )
-                
+            has_history = existing_state and existing_state.values.get('messages')
         except Exception as e:
-            logger.warning(f"⚠️  Could not load existing state: {e}")
-            logger.info(f"🆕 STARTING NEW CONVERSATION (error fallback)")
-            
+            logger.warning(f"⚠️ Could not load existing state for session '{chat_request.session_id}': {e}")
+            has_history = False
+
+        if has_history:
+            logger.info(f"📚 Continuing conversation for session '{chat_request.session_id}'")
+            input_state = {"messages": [HumanMessage(content=chat_request.message)]}
+        else:
+            logger.info(f"🆕 Starting new conversation for session '{chat_request.session_id}'")
             input_state = StateBuilder.create_initial_state(
-                messages=[HumanMessage(content=request.message)],
-                session_id=request.session_id,
-                max_iterations=10
+                messages=[HumanMessage(content=chat_request.message)],
+                session_id=chat_request.session_id,
+                max_iterations=settings.MAX_GRAPH_ITERATIONS
             )
 
-        # ============================================
-        # 🚀 Agent 실행
-        # ============================================
+        # Execute the agent graph
         logger.info("🚀 Executing agent graph...")
         result_state = await graph.ainvoke(input_state, config=graph_config)
+        logger.info("✅ Graph execution completed.")
 
-        # ============================================
-        # 📊 실행 결과 분석
-        # ============================================
-        logger.info(f"\n{'='*80}")
-        logger.info(f"✅ EXECUTION COMPLETED")
-        logger.info(f"   Status: {result_state.get('status')}")
-        logger.info(f"   Iterations: {result_state.get('iteration', 0)}")
-        logger.info(f"   Tool calls: {len(result_state.get('tool_calls', []))}")
-
-        # 전체 메시지 수 확인
+        # Extract the final response
         all_messages = result_state.get("messages", [])
-        logger.info(f"   Total messages in state: {len(all_messages)}")
-        
-        # 🔍 디버깅: 전체 대화 기록 출력
-        if all_messages:
-            logger.info(f"\n   Full conversation history:")
-            for i, msg in enumerate(all_messages, 1):
-                msg_type = type(msg).__name__
-                content_preview = msg.content[:80] if hasattr(msg, 'content') else str(msg)[:80]
-                logger.info(f"      [{i}] {msg_type}: {content_preview}...")
-        
-        logger.info(f"{'='*80}\n")
-
-        # ============================================
-        # 💬 응답 추출
-        # ============================================
-        if not all_messages:
-            logger.warning("⚠️  No messages in result state")
-            return ChatResponse(
-                response="응답을 생성할 수 없습니다.",
-                status="warning",
-                metadata={
-                    "execution_status": str(result_state.get('status')),
-                    "iterations": result_state.get('iteration', 0),
-                    "session_id": request.session_id
-                }
-            )
-
-        # AI 메시지만 필터링
         ai_messages = [m for m in all_messages if isinstance(m, AIMessage)]
-        
-        if not ai_messages:
-            logger.warning("⚠️  No AI messages found")
-            return ChatResponse(
-                response="AI 응답이 생성되지 않았습니다.",
-                status="warning",
-                metadata={
-                    "total_messages": len(all_messages),
-                    "execution_status": str(result_state.get('status')),
-                    "session_id": request.session_id
-                }
-            )
 
-        # 마지막 AI 메시지가 최종 응답
+        if not ai_messages:
+            logger.warning("⚠️ No AI messages found in the final state.")
+            return ChatResponse(response="AI did not generate a response.", status="warning")
+
         final_response = ai_messages[-1].content
-        
-        logger.info(f"💬 Returning response: {len(final_response)} chars")
-        logger.info(f"   (AI message {len(ai_messages)} of {len(all_messages)} total)")
+        logger.info(f"💬 Returning response for session '{chat_request.session_id}'.")
 
         return ChatResponse(
             response=final_response,
             status="success",
-            metadata={
-                "session_id": request.session_id,
-                "execution_status": str(result_state.get('status')),
-                "iterations": result_state.get('iteration', 0),
-                "tool_calls": len(result_state.get('tool_calls', [])),
-                "conversation_length": len(all_messages),
-                "ai_messages_count": len(ai_messages),
-                "execution_path": result_state.get('execution_path', []),
-                "has_conversation_history": len(all_messages) > 2  # User + AI = 2, 더 많으면 기록 있음
-            }
+            metadata={"session_id": chat_request.session_id}
         )
 
     except asyncio.TimeoutError:
-        logger.error("❌ Request timeout")
+        logger.error(f"❌ Request timeout for session '{chat_request.session_id}'")
         return ChatResponse(
-            response="요청 처리 시간이 초과되었습니다.",
+            response="Request timed out.",
             status="error",
-            metadata={"error": "timeout", "session_id": request.session_id}
+            metadata={"error": "timeout", "session_id": chat_request.session_id}
         )
     
     except Exception as e:
-        logger.error(f"❌ Chat processing failed: {e}", exc_info=True)
-        
+        logger.error(f"❌ Chat processing failed for session '{chat_request.session_id}': {e}", exc_info=True)
         return ChatResponse(
-            response=f"처리 중 오류가 발생했습니다: {str(e)}",
+            response=f"An internal error occurred: {str(e)}",
             status="error",
-            metadata={
-                "error": "processing_error",
-                "detail": str(e),
-                "session_id": request.session_id
-            }
+            metadata={"error": "processing_error", "detail": str(e), "session_id": chat_request.session_id}
         )
 
-
 # =============================
-# 세션 관리 API
+# Session Management API
 # =============================
 
 @app.get("/chat/sessions")
-async def list_sessions():
-    """활성 세션 목록 조회"""
-    global session_manager
-    
+async def list_sessions(request: Request):
+    """Lists all active session IDs."""
+    session_manager = request.app.state.session_manager
     if not session_manager:
         return {"status": "error", "message": "SessionManager not initialized"}
     
-    try:
-        sessions = session_manager.list_all_sessions()
-        return {"status": "success", "sessions": sessions, "count": len(sessions)}
-    except Exception as e:
-        logger.error(f"Failed to list sessions: {e}")
-        return {"status": "error", "message": str(e)}
+    sessions = session_manager.list_all_sessions()
+    return {"status": "success", "sessions": sessions, "count": len(sessions)}
 
 
 @app.get("/chat/sessions/detailed")
-async def list_sessions_detailed():
-    """활성 세션 상세 정보 조회"""
-    global session_manager
-    
+async def list_sessions_detailed(request: Request):
+    """Lists detailed information for all active sessions."""
+    session_manager = request.app.state.session_manager
     if not session_manager:
         return {"status": "error", "message": "SessionManager not initialized"}
-    
-    try:
-        sessions = session_manager.list_sessions_with_details()
-        return {"status": "success", "sessions": sessions, "count": len(sessions)}
-    except Exception as e:
-        logger.error(f"Failed to list detailed sessions: {e}")
-        return {"status": "error", "message": str(e)}
-
-
-@app.get("/chat/session/{session_id}")
-async def get_session_info(session_id: str):
-    """특정 세션 정보 조회"""
-    global session_manager
-    
-    if not session_manager:
-        return {"status": "error", "message": "SessionManager not initialized"}
-    
-    try:
-        info = session_manager.get_session_details(session_id)
         
-        if not info:
-            return {"status": "not_found", "message": f"Session {session_id} not found"}
-        
-        return {"status": "success", "session": info}
-    except Exception as e:
-        logger.error(f"Failed to get session info: {e}")
-        return {"status": "error", "message": str(e)}
+    sessions = session_manager.list_sessions_with_details()
+    return {"status": "success", "sessions": sessions, "count": len(sessions)}
 
 
 @app.get("/chat/session/{session_id}/history")
-async def get_conversation_history(session_id: str):
-    """
-    특정 세션의 대화 기록 조회
-    
-    Returns:
-        대화 메시지 리스트
-    """
-    global graph
-    
+async def get_conversation_history(session_id: str, request: Request):
+    """Retrieves the conversation history for a specific session."""
+    graph = request.app.state.graph
     if not graph:
         return {"status": "error", "message": "Graph not initialized"}
     
@@ -403,22 +284,12 @@ async def get_conversation_history(session_id: str):
         state = await graph.aget_state(config)
         
         if not state or not state.values:
-            return {
-                "status": "not_found",
-                "message": f"Session {session_id} not found",
-                "messages": []
-            }
+            return {"status": "not_found", "message": f"Session {session_id} not found", "messages": []}
         
         messages = state.values.get('messages', [])
-        
-        # 메시지를 JSON 직렬화 가능한 형태로 변환
-        message_list = []
-        for msg in messages:
-            message_list.append({
-                "type": type(msg).__name__,
-                "role": getattr(msg, 'type', 'unknown'),
-                "content": msg.content if hasattr(msg, 'content') else str(msg)
-            })
+        message_list = [
+            {"type": type(msg).__name__, "content": msg.content} for msg in messages
+        ]
         
         return {
             "status": "success",
@@ -426,69 +297,39 @@ async def get_conversation_history(session_id: str):
             "message_count": len(messages),
             "messages": message_list
         }
-        
     except Exception as e:
-        logger.error(f"Failed to get conversation history: {e}")
+        logger.error(f"Failed to get conversation history for '{session_id}': {e}")
         return {"status": "error", "message": str(e)}
 
 
 @app.delete("/chat/session/{session_id}")
-async def delete_session(session_id: str):
-    """세션 삭제"""
-    global session_manager
-    
+async def delete_session(session_id: str, request: Request):
+    """Deletes a session and its history."""
+    session_manager = request.app.state.session_manager
     if not session_manager:
         return {"status": "error", "message": "SessionManager not initialized"}
     
-    try:
-        result = session_manager.delete_session(session_id)
-        
-        if result["deleted"]:
-            logger.info(f"🗑️  Session {session_id} deleted")
-            return {
-                "status": "success",
-                "message": f"Session {session_id} deleted",
-                "checkpoints_deleted": result["checkpoints_deleted"]
-            }
-        else:
-            return {"status": "not_found", "message": f"Session {session_id} not found"}
-    except Exception as e:
-        logger.error(f"Failed to delete session: {e}")
-        return {"status": "error", "message": str(e)}
+    result = session_manager.delete_session(session_id)
+    if result["deleted"]:
+        logger.info(f"🗑️ Session {session_id} deleted")
+        return {"status": "success", "message": f"Session {session_id} deleted"}
+    else:
+        return {"status": "not_found", "message": f"Session {session_id} not found"}
 
 
-@app.get("/chat/statistics")
-async def get_statistics():
-    """전체 세션 통계"""
-    global session_manager
-    
-    if not session_manager:
-        return {"status": "error", "message": "SessionManager not initialized"}
-    
-    try:
-        stats = session_manager.get_statistics()
-        return {"status": "success", "statistics": stats}
-    except Exception as e:
-        logger.error(f"Failed to get statistics: {e}")
-        return {"status": "error", "message": str(e)}
-
-
-@app.get("/agents")
-async def list_agents():
-    """등록된 Agent 목록"""
-    agents = AgentRegistry.list_agents()
-    return {"agents": agents, "count": len(agents)}
-
+# =============================
+# Server Execution
+# =============================
 
 if __name__ == "__main__":
     import uvicorn
 
-    logger.info("🚀 Starting API Server on http://localhost:8080")
+    logger.info(f"🚀 Starting API Server on http://{settings.API_HOST}:{settings.API_PORT}")
     
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8080,
+        host=settings.API_HOST,
+        port=settings.API_PORT,
         reload=True,
-        log_level="info"
+        log_level=settings.LOG_LEVEL.lower()
     )

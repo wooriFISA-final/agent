@@ -1,10 +1,11 @@
 """
 LLM Manager Module
-LLM 설정 및 관리 (Ollama HTTP API 직접 호출, LangChain 의존성 제거)
+LLM 설정 및 관리 (Ollama HTTP API 직접 호출)
 """
 from typing import Optional, Dict, Any, List
 import requests
 from core.logging.logger import setup_logger
+from core.config.setting import settings
 
 logger = setup_logger()
 
@@ -12,11 +13,10 @@ logger = setup_logger()
 class LLMManager:
     """
     LLM 관리 클래스 (싱글톤)
-    Ollama Chat API를 직접 호출하는 방식 (LangChain 불필요)
+    Ollama Chat API를 직접 호출하는 방식
     """
     
     _instance: Optional['LLMManager'] = None
-    _config: Optional[Dict[str, Any]] = None
     
     def __new__(cls):
         if cls._instance is None:
@@ -24,56 +24,56 @@ class LLMManager:
         return cls._instance
     
     @classmethod
-    def get_config(cls, **kwargs) -> Dict[str, Any]:
+    def get_default_config(cls) -> Dict[str, Any]:
         """
-        LLM 설정 가져오기
+        전역 기본 LLM 설정 가져오기 (settings 기반)
+        
+        Returns:
+            기본 LLM 설정 딕셔너리
+        """
+        return {
+            "provider": settings.LLM_PROVIDER,
+            "model": settings.LLM_MODEL,
+            "temperature": settings.LLM_TEMPERATURE,
+            "max_tokens": settings.LLM_MAX_TOKENS,
+            "base_url": str(settings.LLM_API_BASE_URL),
+            "timeout": settings.LLM_TIMEOUT
+        }
+    
+    @classmethod
+    def merge_config(cls, **overrides) -> Dict[str, Any]:
+        """
+        기본 설정과 오버라이드 병합
         
         Args:
-            **kwargs: LLM 설정 오버라이드
+            **overrides: 덮어쓸 설정값들
             
         Returns:
-            LLM 설정 딕셔너리
+            병합된 LLM 설정
         """
-        if cls._config is None:
-            cls._config = cls._create_config(**kwargs)
-        return cls._config
-    
-    @classmethod
-    def _create_config(cls, **kwargs) -> Dict[str, Any]:
-        """LLM 설정 생성"""
-        provider = kwargs.get("provider", "ollama")
-        model = kwargs.get("model", "qwen3:8b")
-        temperature = kwargs.get("temperature", 0.3)
-        base_url = kwargs.get("base_url", "http://localhost:11434")
-        timeout = kwargs.get("timeout", 180)
+        config = cls.get_default_config()
         
-        llm_config = {
-            "provider": provider,
-            "model": model,
-            "temperature": temperature,
-            "base_url": base_url,
-            "timeout": timeout
-        }
+        # overrides에 있는 값만 업데이트
+        for key in config.keys():
+            if key in overrides and overrides[key] is not None:
+                config[key] = overrides[key]
         
-        logger.info(f"🤖 LLM Config: provider={provider}, model={model}, base_url={base_url}")
-        return llm_config
+        logger.debug(f"🤖 Merged LLM Config: {config}")
+        return config
     
     @classmethod
-    def reset(cls):
-        """LLM 설정 초기화"""
-        cls._config = None
-        logger.info("🔄 LLM config reset")
-    
-    @classmethod
-    def test_connection(cls) -> bool:
+    def test_connection(cls, **config_overrides) -> bool:
         """
         LLM 연결 테스트
         
+        Args:
+            **config_overrides: 테스트용 설정 오버라이드
+            
         Returns:
             연결 성공 여부
         """
         try:
-            config = cls.get_config()
+            config = cls.merge_config(**config_overrides)
             response = cls._call_ollama_chat(
                 messages=[{"role": "user", "content": "Hello"}],
                 model=config["model"],
@@ -82,7 +82,7 @@ class LLMManager:
                 temperature=0.1,
                 stream=False
             )
-            logger.info(f"✅ LLM connection test successful")
+            logger.info(f"✅ LLM connection test successful: {config['base_url']}")
             return True
         except Exception as e:
             logger.error(f"❌ LLM connection test failed: {e}")
@@ -136,7 +136,8 @@ class LLMManager:
             
             result = response.json()
             
-            logger.info(f"chat ollama result : {result}")
+            logger.debug(f"Ollama API result: {result}")
+            
             # stream=False인 경우 message.content 반환
             if not stream:
                 return result.get('message', {}).get('content', '').strip()
@@ -145,7 +146,7 @@ class LLMManager:
             return result
             
         except requests.exceptions.Timeout:
-            error_msg = f"❌ Ollama 타임아웃 ({timeout}초 초과). 모델: {model}"
+            error_msg = f"❌ Ollama 타임아웃 ({timeout}초 초과). 모델: {model}, URL: {base_url}"
             logger.error(error_msg)
             raise TimeoutError(error_msg)
             
@@ -161,7 +162,7 @@ class LLMManager:
 
 
 class LLMHelper:
-    """LLM 사용을 위한 헬퍼 함수들 (LangChain 불필요)"""
+    """LLM 사용을 위한 헬퍼 함수들"""
     
     @staticmethod
     def invoke(
@@ -180,15 +181,7 @@ class LLMHelper:
         Returns:
             LLM 응답 텍스트
         """
-        config = LLMManager.get_config(**kwargs)
-        
-        # kwargs에서 설정 추출
-        model = kwargs.get("model", config["model"])
-        base_url = kwargs.get("base_url", config["base_url"])
-        temperature = kwargs.get("temperature", config["temperature"])
-        timeout = kwargs.get("timeout", config["timeout"])
-        format_type = kwargs.get("format")
-        options = kwargs.get("options")
+        config = LLMManager.merge_config(**kwargs)
         
         # 메시지 구성
         messages = []
@@ -198,13 +191,13 @@ class LLMHelper:
         
         return LLMManager._call_ollama_chat(
             messages=messages,
-            model=model,
-            base_url=base_url,
-            timeout=timeout,
-            temperature=temperature,
+            model=config["model"],
+            base_url=config["base_url"],
+            timeout=config["timeout"],
+            temperature=config["temperature"],
             stream=False,
-            format=format_type,
-            options=options
+            format=kwargs.get("format"),
+            options=kwargs.get("options")
         )
     
     @staticmethod
@@ -226,14 +219,7 @@ class LLMHelper:
         Returns:
             LLM 응답
         """
-        config = LLMManager.get_config(**kwargs)
-        
-        model = kwargs.get("model", config["model"])
-        base_url = kwargs.get("base_url", config["base_url"])
-        temperature = kwargs.get("temperature", config["temperature"])
-        timeout = kwargs.get("timeout", config["timeout"])
-        format_type = kwargs.get("format")
-        options = kwargs.get("options")
+        config = LLMManager.merge_config(**kwargs)
         
         # 메시지 구성
         messages = []
@@ -246,17 +232,18 @@ class LLMHelper:
         messages.extend(history)
         
         # 현재 프롬프트
-        messages.append({"role": "user", "content": prompt})
+        if prompt:
+            messages.append({"role": "user", "content": prompt})
         
         return LLMManager._call_ollama_chat(
             messages=messages,
-            model=model,
-            base_url=base_url,
-            timeout=timeout,
-            temperature=temperature,
+            model=config["model"],
+            base_url=config["base_url"],
+            timeout=config["timeout"],
+            temperature=config["temperature"],
             stream=False,
-            format=format_type,
-            options=options
+            format=kwargs.get("format"),
+            options=kwargs.get("options")
         )
     
     @staticmethod
@@ -276,14 +263,7 @@ class LLMHelper:
         Yields:
             응답 청크
         """
-        config = LLMManager.get_config(**kwargs)
-        
-        model = kwargs.get("model", config["model"])
-        base_url = kwargs.get("base_url", config["base_url"])
-        temperature = kwargs.get("temperature", config["temperature"])
-        timeout = kwargs.get("timeout", config["timeout"])
-        format_type = kwargs.get("format")
-        options = kwargs.get("options")
+        config = LLMManager.merge_config(**kwargs)
         
         # 메시지 구성
         messages = []
@@ -292,20 +272,20 @@ class LLMHelper:
         messages.append({"role": "user", "content": prompt})
         
         payload = {
-            "model": model,
+            "model": config["model"],
             "messages": messages,
             "stream": True,
-            "options": options or {"temperature": temperature}
+            "options": kwargs.get("options") or {"temperature": config["temperature"]}
         }
         
-        if format_type:
-            payload["format"] = format_type
+        if kwargs.get("format"):
+            payload["format"] = kwargs["format"]
         
         try:
             response = requests.post(
-                f"{base_url}/api/chat",
+                f"{config['base_url']}/api/chat",
                 json=payload,
-                timeout=timeout,
+                timeout=config["timeout"],
                 stream=True
             )
             response.raise_for_status()

@@ -2,10 +2,8 @@ from abc import ABC, abstractmethod
 import asyncio
 import json
 import re
-import os
 from typing import Any, Dict, Optional, List
 from enum import Enum
-from dotenv import load_dotenv
 
 from agent.config.base_config import (
     BaseAgentConfig,
@@ -20,16 +18,9 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 
 from core.mcp.mcp_manager import MCPManager
 from core.logging.logger import setup_logger
-from core.llm.llm_manger import LLMHelper
+from core.llm.llm_manger import LLMManager, LLMHelper
 
 logger = setup_logger()
-
-
-# =============================
-# LLM 환경변수 로드
-# =============================
-load_dotenv()
-Ollama_BASE_URL = os.getenv("AGENT_LLM_BASE_URL")
 
 
 # =============================
@@ -65,23 +56,21 @@ class AgentBase(ABC):
     - LLMManager를 통한 Ollama Chat API 직접 호출
     - LangChain 메시지는 LangGraph 호환을 위해 유지
     - LLM 호출 시에만 딕셔너리로 변환하여 사용
+    - Agent별 LLM 설정 지원
     """
 
     def __init__(self, config: BaseAgentConfig):
         self.name = config.name
         self.config = config
         self.mcp = MCPManager().get_instance()
-        self.max_iterations = getattr(config, 'max_iterations', 10)
+        self.max_iterations = config.max_iterations
         
-        # LLM 설정 초기화
-        self.llm_config = {
-            "model": getattr(config, 'model_name', 'qwen3:8b'),
-            "temperature": getattr(config, 'temperature', 0.3),
-            "base_url": getattr(config, 'base_url', Ollama_BASE_URL),
-            "timeout": getattr(config, 'timeout', 180),
-        }
+        # Agent별 LLM 설정 병합 (전역 설정 + Agent별 오버라이드)
+        self.llm_config = config.get_llm_config_dict()
         
-        logger.info(f"[{self.name}] LLM Config: {self.llm_config}")
+        logger.info(f"[{self.name}] Agent initialized")
+        logger.info(f"[{self.name}] LLM overrides: {self.llm_config if self.llm_config else 'None (using global settings)'}")
+        
         self._validate_config()
 
     # =============================
@@ -110,15 +99,20 @@ class AgentBase(ABC):
         """
         LLM 호출 (동기 방식)
         
+        우선순위:
+        1. 메서드 호출 시 전달된 kwargs
+        2. Agent별 llm_config
+        3. 전역 설정 (LLMManager 기본값)
+        
         Args:
             messages: LangChain 메시지 리스트
             system_prompt: 시스템 프롬프트
-            **kwargs: 추가 LLM 설정
+            **kwargs: 추가 LLM 설정 (최우선)
             
         Returns:
             LLM 응답 텍스트
         """
-        # config와 kwargs 병합
+        # Agent 설정과 kwargs 병합 (kwargs가 우선)
         llm_params = {**self.llm_config, **kwargs}
         
         # LangChain 메시지를 딕셔너리로 변환
@@ -206,7 +200,7 @@ class AgentBase(ABC):
         """멀티턴 실행 플로우"""
         messages = state.get("messages", [])
         
-        logger.info(f"[{self.name}] Mesages Info: {messages}")
+        logger.info(f"[{self.name}] Messages count: {len(messages)}")
         
         # MCP 도구 목록 조회
         available_tools = await self._list_mcp_tools()
@@ -219,7 +213,7 @@ class AgentBase(ABC):
             state = StateBuilder.finalize_state(state, ExecutionStatus.FAILED)
             return state
         
-        logger.info(f"[{self.name}] Available tools: {available_tools}")
+        logger.debug(f"[{self.name}] Available tools: {available_tools}")
         
         # ReAct Loop
         while not StateBuilder.is_max_iterations_reached(state):
@@ -300,7 +294,7 @@ class AgentBase(ABC):
                     state["last_result"] = final_response
                     
                     state = StateBuilder.finalize_state(state, ExecutionStatus.SUCCESS)
-                    logger.info(f"[{self.name}]의 전체 메시지 수: {len(state['messages'])}")
+                    logger.info(f"[{self.name}] Total messages: {len(state['messages'])}")
                     logger.info(f"💬 Final response generated ({len(final_response)} chars)")
                     return state
                     
@@ -368,7 +362,7 @@ class AgentBase(ABC):
             )
             
             content = self._remove_think_tag(response)
-            logger.info(f"[{self.name}] Request analysis raw response: {content}")
+            logger.debug(f"[{self.name}] Request analysis raw response: {content}")
             
             parsed = json.loads(content)
             return json.dumps(parsed, ensure_ascii=False)
@@ -435,7 +429,7 @@ class AgentBase(ABC):
             )
             
             content = self._remove_think_tag(response)
-            logger.info(f"[{self.name}] Decision making raw response: {content}")
+            logger.debug(f"[{self.name}] Decision making raw response: {content}")
             
             decision_json = json.loads(content)
             
@@ -519,37 +513,36 @@ class AgentBase(ABC):
             tools_spec = []
             
             if hasattr(self, "allowed_tools"):
-                if self.allowed_tools is 'ALL':
+                if self.allowed_tools == 'ALL':
                     pass  # 전체 툴 허용
                 elif len(self.allowed_tools) == 0:
                     tools = []  # 툴 없음
                 else:
                     tools = [t for t in tools if t.name in self.allowed_tools]
 
-
-                for tool in tools:
-                    schema = tool.inputSchema or {}
-                    props = schema.get("properties", {})
-                    if not props:
-                        continue
-                    tools_spec.append({
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "parameters": {
-                                "type": schema.get("type", "object"),
-                                "properties": {
-                                    k: {
-                                        "type": p.get("type", "string"),
-                                        "description": p.get("description", "")
-                                    } for k, p in props.items()
-                                },
-                                "required": schema.get("required", [])
+            for tool in tools:
+                schema = tool.inputSchema or {}
+                props = schema.get("properties", {})
+                if not props:
+                    continue
+                tools_spec.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "parameters": {
+                            "type": schema.get("type", "object"),
+                            "properties": {
+                                k: {
+                                    "type": p.get("type", "string"),
+                                    "description": p.get("description", "")
+                                } for k, p in props.items()
                             },
+                            "required": schema.get("required", [])
                         },
-                    })
-                logger.info(f"[{self.name}] Retrieved tools: {json.dumps(tools_spec, indent=2, ensure_ascii=False, default=str)}")
-                return tools_spec
+                    },
+                })
+            logger.debug(f"[{self.name}] Retrieved {len(tools_spec)} tools")
+            return tools_spec
         except Exception as e:
             logger.error(f"[{self.name}] Failed to list MCP tools: {e}")
             return []
