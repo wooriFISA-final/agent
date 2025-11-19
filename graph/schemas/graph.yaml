@@ -1,0 +1,61 @@
+entry_point: plan_input
+finish_point: summary_node
+
+nodes:
+  - name: plan_input
+    agent: plan_input_agent
+    config:
+      model_name: "qwen3:8b"
+      max_iterations: 2000
+      timeout: 3000
+
+  - name: validation
+    agent: validation_agent
+    config:
+      model_name: "qwen3:8b"
+      max_iterations: 1000
+      timeout: 3000
+
+  - name: loan_recommend
+    agent: loan_agent
+    config:
+      model_name: "qwen3:8b"
+      max_iterations: 500
+      timeout: 3000
+
+  - name: saving_recommend
+    agent: saving_agent
+    config:
+      model_name: "qwen3:8b"
+      max_iterations: 500
+      timeout: 3000
+
+  - name: fund_recommend
+    agent: fund_agent
+    config:
+      model_name: "qwen3:8b"
+      max_iterations: 500
+      timeout: 3000
+
+  - name: summary_node
+    agent: summary_agent
+    config:
+      model_name: "qwen3:8b"
+      max_iterations: 500
+      timeout: 3000
+
+edges:
+  - from: plan_input
+    to: validation
+
+  - from: validation
+    to: loan_recommend
+
+  - from: loan_recommend
+    to: saving_recommend
+
+  - from: saving_recommend
+    to: fund_recommend
+
+  - from: fund_recommend
+    to: summary_node

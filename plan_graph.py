@@ -1,11 +1,16 @@
-<<<<<<< HEAD
+import os
 import json
 import logging
 from typing import Dict, Any, Optional, Annotated
+
+# LangGraph
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph.message import MessagesState
+
+# LangChain core
 from langchain_core.messages import AIMessage
+from dotenv import load_dotenv
 
 # ----------------------------------
 # 1️⃣ 에이전트 임포트
@@ -18,11 +23,21 @@ from plan_agents.fund_agent import FundAgentNode
 from plan_agents.summary_agent import SummaryAgent
 
 # ----------------------------------
-# 2️⃣ 로깅 설정
+# 2️⃣ 로깅 & LangSmith 설정 (env 기반)
 # ----------------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 print("--- ✅ 에이전트 모듈 로드 완료 ---")
+
+load_dotenv()  # .env 로드
+
+# ✨ LangSmith V2 트레이싱: env 만으로 활성화 (별도 Client 불필요)
+os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")  # 트레이싱 on
+os.environ.setdefault("LANGCHAIN_PROJECT", os.getenv("LANGCHAIN_PROJECT", "WooriPlanner"))
+# API Key는 .env에 LANGCHAIN_API_KEY=... 로 넣어두세요.
+
+if not os.getenv("LANGCHAIN_API_KEY"):
+    logger.warning("⚠️ LANGCHAIN_API_KEY가 설정되지 않았습니다. LangSmith 트레이싱이 비활성화될 수 있습니다.")
 
 # ----------------------------------
 # 3️⃣ 병합 함수
@@ -68,9 +83,7 @@ async def handle_error_node(state: GraphState):
     msg = state.get("final_response", {}).get("message", "⚠️ 알 수 없는 오류가 발생했습니다.")
     return {"messages": [AIMessage(content=msg)]}
 
-
 async def update_state_after_validation(state: GraphState):
-    """검증 결과를 그래프 상태에 반영"""
     status = state.get("final_response", {}).get("status", "error")
     if status == "success":
         validated_data = state.get("final_response", {}).get("data", {})
@@ -83,14 +96,12 @@ async def update_state_after_validation(state: GraphState):
         return {"messages": [AIMessage(content="❌ 유효하지 않은 입력 데이터입니다.")]}
 
 # ----------------------------------
-# 7️⃣ 조건부 라우터 정의
+# 7️⃣ 조건부 라우터
 # ----------------------------------
 def route_after_input(state: GraphState):
-    """입력 완료 여부 확인"""
     return "validate_input" if state.get("input_completed", False) else END
 
 def route_after_validation(state: GraphState):
-    """검증 결과에 따른 분기"""
     status = state.get("final_response", {}).get("status", "error")
     return "update_state_after_validation" if status == "success" else "handle_error"
 
@@ -100,7 +111,7 @@ def route_after_validation(state: GraphState):
 def create_graph():
     workflow = StateGraph(GraphState)
 
-    # ---------------- 노드 등록 ----------------
+    # 노드 등록
     workflow.add_node("extract_info", plan_input_agent.run)
     workflow.add_node("validate_input", validator_agent.run)
     workflow.add_node("update_state_after_validation", update_state_after_validation)
@@ -110,10 +121,10 @@ def create_graph():
     workflow.add_node("summary_node", summary_agent.run)
     workflow.add_node("handle_error", handle_error_node)
 
-    # ---------------- 진입점 설정 ----------------
+    # 진입점
     workflow.set_entry_point("extract_info")
 
-    # ---------------- 연결 설정 ----------------
+    # 연결
     workflow.add_conditional_edges(
         "extract_info",
         route_after_input,
