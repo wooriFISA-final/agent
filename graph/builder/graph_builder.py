@@ -315,7 +315,7 @@ async def example_usage():
         agent_name="user_registration",
         config={
             "model_name": "qwen3:8b",
-            "max_iterations": 8,
+            "max_iterations": 800000,
             "timeout": 300
         }
     )
@@ -336,7 +336,7 @@ async def example_usage():
     ]
     initial_state = StateBuilder.create_initial_state(
         messages=initial_messages,
-        max_iterations=10
+        max_iterations=1000000
     )
     
     # 7. 그래프 실행

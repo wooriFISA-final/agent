@@ -5,7 +5,6 @@ YAML 파일에서 그래프 구조를 읽어 GraphBuilder를 통해 LangGraph를
 from typing import Optional, Any
 import yaml
 from pathlib import Path
-
 from graph.builder.graph_builder import GraphBuilder
 from graph.routing.router_base import RouterBase
 from core.logging.logger import setup_logger
@@ -195,7 +194,7 @@ if __name__ == "__main__":
         initial_state = StateBuilder.create_initial_state(
             messages=[HumanMessage(content="김철수(25세) 등록해줘")],
             session_id="test-session",
-            max_iterations=10
+            max_iterations=100000
         )
         
         # 그래프 실행 (첫 번째 메시지)
@@ -219,7 +218,7 @@ if __name__ == "__main__":
         new_state = StateBuilder.create_initial_state(
             messages=[HumanMessage(content="이영희(30세) 등록해줘")],
             session_id="new-session",
-            max_iterations=10
+            max_iterations=1000000
         )
         print("\n🚀 Executing with new session...")
         result3 = await graph.ainvoke(new_state, config=new_session_config)

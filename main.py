@@ -264,7 +264,7 @@ async def chat_endpoint(request: ChatRequest):
                 input_state = StateBuilder.create_initial_state(
                     messages=[HumanMessage(content=request.message)],
                     session_id=request.session_id,
-                    max_iterations=10
+                    max_iterations=10000000
                 )
         except Exception as e:
             # 상태 조회 실패 시 새 대화로 시작
@@ -274,7 +274,7 @@ async def chat_endpoint(request: ChatRequest):
             input_state = StateBuilder.create_initial_state(
                 messages=[HumanMessage(content=request.message)],
                 session_id=request.session_id,
-                max_iterations=10
+                max_iterations=100000000
             )
 
         # 3. 그래프 실행 (Checkpointer가 자동으로 상태 병합)

@@ -15,5 +15,5 @@ agents:
 
 # Graph
 graph:
-  max_iterations: 100
-  execution_timeout: 300
+  max_iterations: 1000000
+  execution_timeout: 3000

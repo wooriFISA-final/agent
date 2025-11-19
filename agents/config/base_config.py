@@ -30,7 +30,7 @@ class BaseAgentConfig(BaseModel):
     # 실행 제어
     max_retries: int = Field(default=1, ge=0, description="실행 실패 시 재시도 횟수")
     timeout: int = Field(default=1000, gt=0, description="실행 타임아웃(초)")
-    max_iterations: int = Field(default=10, ge=1, description="멀티턴 최대 반복 횟수")
+    max_iterations: int = Field(default=1000000, ge=1, description="멀티턴 최대 반복 횟수")
     
     # Agent 관리
     enabled: bool = Field(default=True, description="Agent 활성화 여부")
@@ -116,7 +116,7 @@ class StateBuilder:
     def create_initial_state(
         messages: List[BaseMessage],
         session_id: Optional[str] = None,
-        max_iterations: int = 10,
+        max_iterations: int = 1000000,
         **kwargs
     ) -> AgentState:
         """
@@ -326,7 +326,7 @@ class StateValidator:
             (검증 성공 여부, 에러 메시지)
         """
         # 반복 횟수 체크
-        if state.get("iteration", 0) > state.get("max_iterations", 10):
+        if state.get("iteration", 0) > state.get("max_iterations", 1000000):
             return False, "Iteration count exceeds max_iterations"
         
         # 상태 값 체크

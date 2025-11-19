@@ -63,7 +63,7 @@ class AgentBase(ABC):
         self.name = config.name
         self.config = config
         self.mcp = MCPManager().get_instance()
-        self.max_iterations = getattr(config, 'max_iterations', 10)
+        self.max_iterations = getattr(config, 'max_iterations', 1000000)
         self._validate_config()
 
     # =============================
