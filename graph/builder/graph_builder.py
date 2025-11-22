@@ -57,6 +57,18 @@ class GraphBuilder:
             self (메서드 체이닝)
         """
         try:
+            # ✅ enabled 체크
+            from agent.config.agent_config_loader import AgentConfigLoader
+            
+            yaml_config = AgentConfigLoader.get_agent_config(agent_name)
+            
+            if yaml_config and not yaml_config.enabled:
+                logger.warning(
+                    f"⚠️  Skipping disabled agent: {agent_name} "
+                    f"(enabled: false in agents.yaml)"
+                )
+                return self
+            
             # Agent 클래스 조회
             agent_class = AgentRegistry.get(agent_name)
             

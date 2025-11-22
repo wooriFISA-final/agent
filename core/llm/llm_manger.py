@@ -32,11 +32,15 @@ class LLMManager:
             기본 LLM 설정 딕셔너리
         """
         return {
+            "base_url": str(settings.LLM_API_BASE_URL),
             "provider": settings.LLM_PROVIDER,
             "model": settings.LLM_MODEL,
             "temperature": settings.LLM_TEMPERATURE,
-            "max_tokens": settings.LLM_MAX_TOKENS,
-            "base_url": str(settings.LLM_API_BASE_URL),
+            "top_p": settings.LLM_TOP_P,
+            "top_k": settings.LLM_TOP_K,
+            "num_ctx": settings.LLM_NUM_CTX,
+            "stream": settings.LLM_STREAM,
+            "format": settings.LLM_FORMAT,
             "timeout": settings.LLM_TIMEOUT
         }
     
@@ -79,7 +83,10 @@ class LLMManager:
                 model=config["model"],
                 base_url=config["base_url"],
                 timeout=10,
-                temperature=0.1,
+                temperature=config["temperature"],
+                top_k=config["top_k"],
+                top_p=config["top_p"],
+                num_ctx=config["num_ctx"],
                 stream=False
             )
             logger.info(f"✅ LLM connection test successful: {config['base_url']}")
@@ -95,52 +102,76 @@ class LLMManager:
         model: str,
         base_url: str,
         timeout: int = 180,
-        temperature: float = 0.3,
         stream: bool = False,
-        format: Optional[str] = None,
-        options: Optional[Dict[str, Any]] = None
+        format: str = "",
+        **kwargs  # ✅ 추가 파라미터 받기
     ) -> str:
         """
-        Ollama Chat API 호출
+        API 호출 
         
         Args:
             messages: 메시지 리스트 [{"role": "user/assistant/system", "content": "..."}]
             model: 모델 이름
             base_url: Ollama 서버 URL
             timeout: 타임아웃 (초)
-            temperature: 온도 설정
             stream: 스트리밍 여부
             format: 응답 포맷 (json 등)
-            options: 추가 옵션
+            **kwargs: temperature, top_k, top_p, num_ctx 등
             
         Returns:
             LLM 응답 텍스트
         """
+        # ✅ options 객체 생성
+        options = {}
+        ollama_option_keys = [
+            'temperature', 'top_k', 'top_p', 'min_p',
+            'num_ctx', 'num_predict', 'seed', 'stop'
+        ]
+        
+        for key in ollama_option_keys:
+            if key in kwargs and kwargs[key] is not None:
+                options[key] = kwargs[key]
+        
+        # Payload 구성
         payload = {
             "model": model,
             "messages": messages,
-            "stream": stream,
-            "options": options or {"temperature": temperature}
+            "stream": stream
         }
         
+        # options가 있으면 추가
+        if options:
+            payload["options"] = options
+        
+        # format이 있으면 추가
         if format:
             payload["format"] = format
         
+        logger.debug(f"🤖 Ollama API Request: {payload}")
+        
         try:
             response = requests.post(
-                f"{base_url}/api/chat",
+                f"{base_url}/chat/completions",
                 json=payload,
                 timeout=timeout
             )
             response.raise_for_status()
             
             result = response.json()
-            
             logger.debug(f"Ollama API result: {result}")
             
             # stream=False인 경우 message.content 반환
             if not stream:
-                return result.get('message', {}).get('content', '').strip()
+                content = (
+                    result.get("message", {}).get("content")  # Ollama 기본 구조
+                    or (
+                        result.get("choices", [{}])[0]  # OpenAI 호환 구조
+                        .get("message", {})
+                        .get("content")
+                    )
+                    or ""
+                )
+                return content.strip()
             
             # stream=True인 경우는 별도 처리 필요
             return result
@@ -194,10 +225,13 @@ class LLMHelper:
             model=config["model"],
             base_url=config["base_url"],
             timeout=config["timeout"],
-            temperature=config["temperature"],
-            stream=False,
-            format=kwargs.get("format"),
-            options=kwargs.get("options")
+            stream=kwargs.get("stream", False),
+            format=kwargs.get("format", ""),
+            # ✅ options 대신 개별 파라미터 전달
+            temperature=kwargs.get("temperature", config["temperature"]),
+            top_k=kwargs.get("top_k", config["top_k"]),
+            top_p=kwargs.get("top_p", config["top_p"]),
+            num_ctx=kwargs.get("num_ctx", config["num_ctx"])
         )
     
     @staticmethod
@@ -240,10 +274,13 @@ class LLMHelper:
             model=config["model"],
             base_url=config["base_url"],
             timeout=config["timeout"],
-            temperature=config["temperature"],
-            stream=False,
-            format=kwargs.get("format"),
-            options=kwargs.get("options")
+            stream=kwargs.get("stream", False),
+            format=kwargs.get("format", ""),
+            # ✅ options 대신 개별 파라미터 전달
+            temperature=kwargs.get("temperature", config["temperature"]),
+            top_k=kwargs.get("top_k", config["top_k"]),
+            top_p=kwargs.get("top_p", config["top_p"]),
+            num_ctx=kwargs.get("num_ctx", config["num_ctx"])
         )
     
     @staticmethod
@@ -271,11 +308,19 @@ class LLMHelper:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
         
+        # ✅ options 객체 생성
+        options = {
+            "temperature": kwargs.get("temperature", config["temperature"]),
+            "top_k": kwargs.get("top_k", config["top_k"]),
+            "top_p": kwargs.get("top_p", config["top_p"]),
+            "num_ctx": kwargs.get("num_ctx", config["num_ctx"])
+        }
+        
         payload = {
             "model": config["model"],
             "messages": messages,
             "stream": True,
-            "options": kwargs.get("options") or {"temperature": config["temperature"]}
+            "options": options
         }
         
         if kwargs.get("format"):
@@ -283,7 +328,7 @@ class LLMHelper:
         
         try:
             response = requests.post(
-                f"{config['base_url']}/api/chat",
+                f"{config['base_url']}/chat/completions",
                 json=payload,
                 timeout=config["timeout"],
                 stream=True

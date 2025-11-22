@@ -64,16 +64,24 @@ async def lifespan(app: FastAPI):
                 logger.error(f"❌ Failed to connect to MCP after {settings.MCP_CONNECTION_RETRIES} attempts")
                 raise
 
-    # 4. Discover and register agents
+    # 4. Load agents.yaml configuration
+    logger.info("📋 Loading agents.yaml configuration...")
+    from agent.config.agent_config_loader import AgentConfigLoader
+    
+    AgentConfigLoader(yaml_path=str(settings.AGENTS_CONFIG_PATH))
+    enabled_agents = AgentConfigLoader.get_enabled_agents()
+    logger.info(f"✅ Loaded {len(enabled_agents)} enabled agents from agents.yaml")
+    
+    # 5. Discover and register agents
     logger.info("📦 Discovering agents...")
     AgentRegistry.auto_discover(module_path=settings.AGENTS_MODULE_PATH)
 
-    # 5. Discover and register routers
+    # 6. Discover and register routers
     logger.info("🔍 Discovering routers...")
     from graph.routing.router_registry import RouterRegistry
     RouterRegistry.auto_discover()
     
-    # 6. Build the main agent graph
+    # 7. Build the main agent graph
     logger.info(f"🔧 Building agent graph from '{settings.GRAPH_YAML_PATH}'...")
     app.state.graph = mk_graph(
         yaml_path=str(settings.GRAPH_YAML_PATH),

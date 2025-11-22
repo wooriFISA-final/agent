@@ -1,29 +1,13 @@
-"""
-System Configuration Module using Pydantic-Settings.
-
-This module provides a centralized, type-safe configuration management
-system for the application. It loads settings from environment variables
-and .env files.
-"""
-import os
-from typing import Optional
+from typing import Optional,Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, HttpUrl
 from pathlib import Path
 
-from dotenv import load_dotenv
-load_dotenv()
-
-# Load Environment Variables
-LLM_BASE_URL = os.getenv("LLM_API_BASE_URL", None)
-
-
 class AgentSystemConfig(BaseSettings):
     """
-    Defines the system's configuration schema.
-
-    Pydantic-Settings automatically maps environment variables to these fields.
-    For example, the environment variable `AGENT_DEBUG` will map to the `debug` field.
+    Assistant Agent System Configuration
+    .env 파일과 환경 변수에서 설정을 로드합니다.
+    중요 : 모든 필수 필드는 .env 파일에 정의되어야 합니다.
     """
     model_config = SettingsConfigDict(
         env_prefix='AGENT_',
@@ -34,40 +18,45 @@ class AgentSystemConfig(BaseSettings):
     )
 
     # Environment
-    ENVIRONMENT: str = Field("development", description="Execution environment")
-    DEBUG: bool = Field(True, description="Debug mode")
+    ENVIRONMENT: str = Field(..., description="운영 환경 (development, staging, production)")
+    DEBUG: bool = Field(..., description="디버그 모드 활성화 여부")
 
     # FastAPI Server
-    API_HOST: str = Field("0.0.0.0", description="Host for the API server")
-    API_PORT: int = Field(8080, description="Port for the API server")
-    API_VERSION: str = Field("2.1.0", description="API Version")
+    API_HOST: str = Field(..., description="FastAPI 서버 호스트 주소")
+    API_PORT: int = Field(..., description="FastAPI 서버 포트 번호")
+    API_VERSION: str = Field(..., description="API 버전")
 
     # Logging
-    LOG_LEVEL: str = Field("INFO", description="Logging level")
-    LOG_FILE: Optional[str] = Field("logs/agent_system.log", description="Log file path")
+    LOG_LEVEL: str = Field(..., description="Logging level")
+    LOG_FILE: Optional[str] = Field(None, description="Log 파일 경로")
 
     # Graph Settings
-    GRAPH_YAML_PATH: Path = Field("graph/schemas/graph.yaml", description="Path to the graph YAML file")
-    MAX_GRAPH_ITERATIONS: int = Field(10, description="Default max iterations for the graph")
+    GRAPH_YAML_PATH: Path = Field(..., description="Graph yaml 파일 경로")
+    MAX_GRAPH_ITERATIONS: int = Field(..., description="최대 그래프 반복 횟수")
 
     # MCP (Mission Control Protocol)
-    MCP_URL: HttpUrl = Field("http://localhost:8888/mcp/", description="URL for the MCP server")
-    MCP_CONNECTION_RETRIES: int = Field(5, description="Number of retries to connect to MCP")
-    MCP_CONNECTION_TIMEOUT: int = Field(2, description="Seconds to wait between MCP connection retries")
+    MCP_URL: HttpUrl = Field(..., description="URL for the MCP server")
+    MCP_CONNECTION_RETRIES: int = Field(..., description="MCP 연결 재시도 횟수")
+    MCP_CONNECTION_TIMEOUT: int = Field(..., description="Timeout for MCP 연결 (초)")
 
     # LLM Provider
-    LLM_PROVIDER: str = Field("ollama", description="The provider for the LLM (e.g., 'ollama', 'openai')")
-    LLM_MODEL: str = Field("qwen3:8b", description="The default model name for the LLM.")
-    LLM_API_BASE_URL: Optional[HttpUrl] = Field(LLM_BASE_URL, description="The base URL for the LLM API, if applicable.")
-    LLM_TEMPERATURE: float = Field(0.7, ge=0.0, le=2.0, description="Default LLM temperature.")
-    LLM_MAX_TOKENS: int = Field(4096, ge=1, description="Default LLM max tokens.")
-    LLM_TIMEOUT: int = Field(180, ge=1, description="Default request timeout in seconds for LLM calls.")
-
+    LLM_PROVIDER: str = Field(..., description="LLM 제공자 이름(예: openai, ollama 등)") # 제거 예정
+    LLM_MODEL: str = Field(..., description="기본 LLM 모델 이름")
+    LLM_API_BASE_URL: Optional[HttpUrl] = Field(None, description="LLM API URL")
+    LLM_TEMPERATURE: float = Field(..., ge=0.0, le=2.0, description="LLM temperature setting")
+    LLM_TIMEOUT: int = Field(..., ge=1, description="LLM 요청 타임아웃 (초)")
+    LLM_TOP_P: float = Field(..., ge=0.0, le=1.0, description="LLM top-p sampling value.")
+    LLM_TOP_K: int = Field(..., ge=0, description="Default LLM top-k sampling value.")
+    LLM_NUM_CTX: int = Field(..., ge=4096, description="LLM context length (토큰 수).")
+    # 새로 추가할 필드
+    LLM_STREAM: bool = Field(default=False, description="스트리밍 응답 활성화 여부")
+    LLM_FORMAT: Literal["", "json"] = Field(default="", description='응답 형식 지정 ("", "json")')
+    
     # Agent Registry
-    AGENTS_MODULE_PATH: str = Field("agent.implementations", description="Python path to discover agents")
-
-
-# Create a single, globally accessible settings instance.
-# This instance is imported by other modules to access configuration values.
+    AGENTS_MODULE_PATH: str = Field(..., description="Agent 구현 모듈 경로 (예: agent.implementations)")
+    
+    AGENTS_CONFIG_PATH: Path = Field(
+        default=Path("agent/config/agents.yaml"),
+        description="Agent 설정 YAML 파일 경로"
+    )
 settings = AgentSystemConfig()
-

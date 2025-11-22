@@ -3,7 +3,7 @@ Graph Factory Module
 This module reads a graph structure from a YAML file and uses a GraphBuilder
 to create a compiled LangGraph instance.
 """
-from typing import Optional, Any, Dict, List
+from typing import Optional, Any, Dict, List, Union
 import yaml
 from pathlib import Path
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -34,9 +34,40 @@ def mk_graph(yaml_path: str, checkpointer: Optional[BaseCheckpointSaver] = None)
 
         builder = GraphBuilder()
 
+        # 1. Build Nodes
         _build_nodes(builder, config.get("nodes", []))
-        _build_edges(builder, config.get("edges", []))
-        _build_conditional_edges(builder, config.get("conditional_edges", []))
+
+        # 2. Parse Edges Configuration
+        # YAML 구조가 리스트(구버전)인지 딕셔너리(신버전: direct/conditional)인지 확인
+        edges_config = config.get("edges", {})
+        
+        direct_edges = []
+        conditional_edges = []
+
+        if isinstance(edges_config, list):
+            # 기존 방식: edges가 리스트인 경우 모두 direct로 가정
+            direct_edges = edges_config
+        elif isinstance(edges_config, dict):
+            # 신규 방식: direct와 conditional 분리
+            direct_edges = edges_config.get("direct", [])
+            conditional_edges = edges_config.get("conditional", [])
+        else:
+            logger.warning(f"Unknown 'edges' format in YAML: {type(edges_config)}")
+
+        # 3. Build Direct Edges
+        # None이 들어올 경우를 대비해 빈 리스트 처리
+        if direct_edges:
+            _build_edges(builder, direct_edges)
+
+        # 4. Build Conditional Edges
+        # 사용자가 YAML에서 리스트(-)를 빼먹었을 경우 단일 딕셔너리로 들어올 수 있음 -> 리스트로 변환
+        if isinstance(conditional_edges, dict):
+            conditional_edges = [conditional_edges]
+        
+        if conditional_edges:
+            _build_conditional_edges(builder, conditional_edges)
+
+        # 5. Set Entry and Finish Points
         _set_entry_and_finish_points(builder, config)
 
         logger.info("Building graph...")
@@ -46,7 +77,10 @@ def mk_graph(yaml_path: str, checkpointer: Optional[BaseCheckpointSaver] = None)
         graph = builder.build(checkpointer=checkpointer)
         
         logger.info("Graph built successfully. Visualizing structure:")
-        logger.info("\n" + builder.visualize_structure())
+        try:
+            logger.info("\n" + builder.visualize_structure())
+        except Exception:
+            logger.info("(Visualization skipped)")
         
         return graph
         
@@ -125,7 +159,6 @@ def _set_entry_and_finish_points(builder: GraphBuilder, config: Dict[str, Any]):
         builder.set_entry_point(entry_point)
         logger.info(f"Set entry point: {entry_point}")
     else:
-        # If no entry point is defined, LangGraph will use the first added node.
         logger.warning("No explicit entry_point defined in YAML. LangGraph will use the first node added.")
 
     finish_points = config.get("finish_points", [])
@@ -149,4 +182,3 @@ def _load_yaml_config(yaml_path: str) -> Optional[Dict[str, Any]]:
     except yaml.YAMLError as e:
         logger.error(f"Error parsing YAML file {yaml_path}: {e}")
         return None
-

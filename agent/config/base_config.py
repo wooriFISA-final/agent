@@ -2,7 +2,7 @@
 Agent State & Config Management Module
 Agent의 설정(Config)과 실행 상태(State)를 명확히 분리하여 관리
 """
-from typing import Any, Dict, List, Optional, TypedDict, Annotated
+from typing import Any, Dict, List, Optional, TypedDict, Annotated,Literal
 from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
@@ -23,7 +23,9 @@ class LLMConfig(BaseModel):
     """
     model: Optional[str] = Field(None, description="LLM 모델명 (None이면 전역 설정 사용)")
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="LLM Temperature")
-    max_tokens: Optional[int] = Field(None, ge=1, description="LLM Max Tokens")
+    top_p : Optional[float] = Field(None, ge=0.0, le=1.0, description="LLM Top-p sampling")
+    top_k : Optional[int] = Field(None, ge=0, description="LLM Top-k sampling")
+    num_ctx : Optional[int] = Field(None, ge=1, description="LLM Context length")
     base_url: Optional[str] = Field(None, description="Ollama 서버 URL")
     timeout: Optional[int] = Field(None, ge=1, description="요청 타임아웃(초)")
     
@@ -60,6 +62,10 @@ class BaseAgentConfig(BaseModel):
     
     # LLM 설정 (Agent별 커스터마이징 가능)
     llm_config: Optional[LLMConfig] = Field(None, description="Agent별 LLM 설정 (None이면 전역 설정 사용)")
+    
+    # LLMConfig 클래스에 추가
+    stream: Optional[bool] = Field(None, description="스트리밍 응답 여부")
+    format: Optional[Literal["", "json"]] = Field(None, description='응답 포맷')
     
     def get_llm_config_dict(self) -> Dict[str, Any]:
         """
@@ -130,7 +136,9 @@ class AgentState(TypedDict, total=False):
     # === 메타 정보 ===
     metadata: Dict[str, Any]                 # 추가 메타데이터
 
-
+    # === Agent 위임 (DELEGATE) ===  
+    next_agent: str
+    delegation_reason: str
 # ============================================================================
 # 3. State 빌더 - 상태 생성 및 관리 헬퍼
 # ============================================================================

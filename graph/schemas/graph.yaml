@@ -1,22 +1,49 @@
-entry_point: user_reg
-finish_point: user_reg
+# ============================================
+# Multi-Agent Graph Configuration
+# ============================================
 
+# ============================================
+# Agent 노드 정의
+# ============================================
 nodes:
-  - name: user_reg
-    agent: user_registration
+  - name: user_create_agent
+    agent: user_create_agent
     config:
-      model_name: "qwen3:8b"
-      max_iterations: 100
+      max_iterations: 10
       timeout: 300
       
-  # - name: template_agent_node
-  #   agent: template_agent
-  #   config:
-  #     model_name: "qwen3:8b"
-  #     max_iterations: 5
-  #     timeout: 200
+  - name: user_check_agent
+    agent: user_check_agent
+    config:
+      max_iterations: 5
+      timeout: 200
 
-# edges:
-#   - source: user_reg
-#     target: template_agent_node
-edges: []
+# ============================================
+# Edge 정의
+# ============================================
+edges:
+  # Direct edges (사용 안 함)
+  direct: []
+  
+  # Conditional edges (DynamicRouter 사용)
+  conditional:
+    - from: user_create_agent
+      router: DynamicRouter
+      paths:
+        user_check: user_check_agent  # ✅ 등록명 사용
+        END: __end__
+    
+    - from: user_check_agent
+      router: DynamicRouter
+      paths:
+        user_creation: user_create_agent  # ✅ 역방향도 가능
+        END: __end__
+
+# ============================================
+# Graph 설정
+# ============================================
+entry_point: user_create_agent
+
+# finish_points는 DynamicRouter가 자동 처리하므로 불필요
+# finish_points:
+#   - user_check
