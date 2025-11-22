@@ -4,7 +4,7 @@ Agent Configuration Module
 Agent 설정 관리를 위한 모듈
 """
 
-from agent.config.base_config import (
+from agents.config.base_config import (
     BaseAgentConfig,
     LLMConfig,
     AgentState,

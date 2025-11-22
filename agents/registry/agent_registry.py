@@ -4,7 +4,7 @@ Agent Registry Module
 Agent 자동 등록 및 관리를 담당하는 레지스트리
 """
 from typing import Dict, Type, Optional, List
-from agent.base.agent_base import AgentBase
+from agents.base.agent_base import AgentBase
 import importlib
 import inspect
 import pkgutil
@@ -39,7 +39,7 @@ class AgentRegistry:
             agent_name = name or agent_class.__name__
             
             # ✅ enabled 체크 추가
-            from agent.config.agent_config_loader import AgentConfigLoader
+            from agents.config.agent_config_loader import AgentConfigLoader
             yaml_config = AgentConfigLoader.get_agent_config(agent_name)
             
             if yaml_config and not yaml_config.enabled:
@@ -75,7 +75,7 @@ class AgentRegistry:
     @classmethod
     def list_enabled_agents(cls) -> List[str]:
         """활성화된(enabled=true) Agent 목록만 반환"""
-        from agent.config.agent_config_loader import AgentConfigLoader
+        from agents.config.agent_config_loader import AgentConfigLoader
         
         enabled = []
         for agent_name in cls._agents.keys():
@@ -89,7 +89,7 @@ class AgentRegistry:
     @classmethod
     def get_agents_by_tag(cls, tag: str) -> List[str]:
         """특정 태그를 가진 활성화된 Agent 목록"""
-        from agent.config.agent_config_loader import AgentConfigLoader
+        from agents.config.agent_config_loader import AgentConfigLoader
         
         result = []
         for agent_name in cls._agents.keys():
@@ -115,7 +115,7 @@ class AgentRegistry:
             return
 
         # ✅ agents.yaml 로드 확인
-        from agent.config.agent_config_loader import AgentConfigLoader
+        from agents.config.agent_config_loader import AgentConfigLoader
         
         # 서브모듈 재귀 탐색
         for _, module_name, is_pkg in pkgutil.walk_packages(package.__path__, package.__name__ + "."):

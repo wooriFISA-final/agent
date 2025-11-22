@@ -1,0 +1,32 @@
+services:
+  agent-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: multi-agent-system
+    # .env 파일에서 환경 변수 자동 로드
+    env_file:
+      - .env
+    # 포트 매핑 (.env에서 AGENT_API_PORT 설정 가능)
+    ports:
+      - "${AGENT_API_PORT:-8080}:8080"
+    # 볼륨 마운트
+    volumes:
+      - ./logs:/app/logs # 로그 파일
+      - ./config:/app/config:ro # 설정 파일 (읽기 전용)
+    # 재시작 정책
+    restart: unless-stopped
+    # 헬스체크
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost',8080)); s.close()" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # 네트워크
+    networks:
+      - agent-network
+
+networks:
+  agent-network:
+    driver: bridge

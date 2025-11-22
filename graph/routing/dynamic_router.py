@@ -5,7 +5,7 @@ Agent의 delegation 결정을 반영하여 동적으로 다음 노드를 결정�
 """
 
 from typing import Literal
-from agent.config.base_config import AgentState, ExecutionStatus
+from agents.config.base_config import AgentState, ExecutionStatus
 from graph.routing.router_base import RouterBase
 from core.logging.logger import setup_logger
 

@@ -3,10 +3,10 @@ import asyncio
 from pathlib import Path
 from langgraph.checkpoint.memory import MemorySaver
 
-from agent.agent.base.agent_base import AgentBase, AgentState
-from agent.agent.registry.agent_registry import AgentRegistry
+from agents.agent.base.agent_base import AgentBase, AgentState
+from agents.agent.registry.agent_registry import AgentRegistry
 from graph.factory import mk_graph
-from agent.config.base_config import BaseAgentConfig
+from agents.config.base_config import BaseAgentConfig
 
 # Define a dummy agent for testing purposes
 @AgentRegistry.register("TestUserRegistrationAgent")

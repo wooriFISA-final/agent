@@ -53,10 +53,10 @@ class AgentSystemConfig(BaseSettings):
     LLM_FORMAT: Literal["", "json"] = Field(default="", description='응답 형식 지정 ("", "json")')
     
     # Agent Registry
-    AGENTS_MODULE_PATH: str = Field(..., description="Agent 구현 모듈 경로 (예: agent.implementations)")
+    AGENTS_MODULE_PATH: str = Field(..., description="Agent 구현 모듈 경로 (예: agents.implementations)")
     
     AGENTS_CONFIG_PATH: Path = Field(
-        default=Path("agent/config/agents.yaml"),
+        default=Path("agents/config/agents.yaml"),
         description="Agent 설정 YAML 파일 경로"
     )
 settings = AgentSystemConfig()

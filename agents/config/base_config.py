@@ -94,51 +94,52 @@ class ExecutionStatus(str, Enum):
     MAX_ITERATIONS = "max_iterations"  # 최대 반복 도달
 
 
+# AgentState 클래스에 global_messages 추가
+
 class AgentState(TypedDict, total=False):
     """
     Agent 실행 상태 스키마 (LangGraph 호환)
     
-    - TypedDict 기반으로 LangGraph State와 직접 호환
-    - 실행 중 동적으로 변경되는 정보
-    
-    ⚠️ 핵심:
-    messages 필드에 Annotated[List[BaseMessage], add_messages] 사용
-    → LangGraph가 자동으로 메시지를 누적(append)함
+    메시지 관리:
+    - global_messages: 전체 대화 기록 (모든 에이전트가 공유, LLM 호출 시 사용)
+    - messages: 현재 에이전트의 작업 메시지 (deprecated, 하위호환용)
     """
-    # === 메시지 처리 (Reducer 적용!) ===
-    messages: Annotated[List[BaseMessage], add_messages]
+    # === 메시지 처리 ===
+    global_messages: Annotated[List[BaseMessage], add_messages]  # ✅ 전체 대화 기록
+    messages: Annotated[List[BaseMessage], add_messages]  # 하위호환용 (기존 코드)
     
     # === 실행 메타데이터 ===
-    session_id: str                          # 세션 ID
-    timestamp: datetime                      # 마지막 업데이트 시각
-    current_agent: str                       # 현재 실행 중인 Agent
-    execution_path: List[str]                # Agent 실행 경로
+    session_id: str
+    timestamp: datetime
+    current_agent: str
+    execution_path: List[str]
     
     # === 실행 제어 ===
-    status: ExecutionStatus                  # 현재 실행 상태
-    iteration: int                           # 현재 반복 횟수
-    max_iterations: int                      # 최대 반복 횟수
+    status: ExecutionStatus
+    iteration: int
+    max_iterations: int
     
     # === 데이터 ===
-    input: Dict[str, Any]                    # 입력 데이터
-    output: Dict[str, Any]                   # 출력 데이터
-    last_result: Any                         # 마지막 실행 결과
-    intermediate_results: Dict[str, Any]     # 중간 결과
+    input: Dict[str, Any]
+    output: Dict[str, Any]
+    last_result: Any
+    intermediate_results: Dict[str, Any]
     
     # === Tool 실행 추적 ===
-    tool_calls: List[Dict[str, Any]]         # Tool 호출 이력
-    tool_results: List[Dict[str, Any]]       # Tool 실행 결과
+    tool_calls: List[Dict[str, Any]]
+    tool_results: List[Dict[str, Any]]
     
     # === 에러 처리 ===
-    errors: List[Dict[str, Any]]             # 발생한 에러 목록
-    warnings: List[str]                      # 경고 메시지
+    errors: List[Dict[str, Any]]
+    warnings: List[str]
     
     # === 메타 정보 ===
-    metadata: Dict[str, Any]                 # 추가 메타데이터
+    metadata: Dict[str, Any]
 
     # === Agent 위임 (DELEGATE) ===  
     next_agent: str
     delegation_reason: str
+    previous_agent: str  # ✅ 추가: 이전 에이전트 추적용
 # ============================================================================
 # 3. State 빌더 - 상태 생성 및 관리 헬퍼
 # ============================================================================
@@ -153,25 +154,15 @@ class StateBuilder:
         max_iterations: int = 10,
         **kwargs
     ) -> AgentState:
-        """
-        초기 상태 생성
-        
-        Args:
-            messages: 초기 메시지 리스트
-            session_id: 세션 ID (없으면 자동 생성)
-            max_iterations: 최대 반복 횟수
-            **kwargs: 추가 상태 필드
-            
-        Returns:
-            초기화된 상태
-        """
         from uuid import uuid4
         
         state = AgentState(
             messages=messages,
+            global_messages=messages.copy(),  # ✅ 초기 메시지로 global_messages 초기화
             session_id=session_id or str(uuid4()),
             timestamp=datetime.now(),
             current_agent="",
+            previous_agent="",  # ✅ 추가
             execution_path=[],
             status=ExecutionStatus.PENDING,
             iteration=0,
@@ -187,7 +178,6 @@ class StateBuilder:
             metadata={}
         )
         
-        # 추가 필드 업데이트
         state.update(kwargs)
         return state
     

@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional, List
 from enum import Enum
 
-from agent.config.base_config import (
+from agents.config.base_config import (
     BaseAgentConfig,
     AgentState,
     StateBuilder,
@@ -14,7 +14,7 @@ from agent.config.base_config import (
     ExecutionStatus
 )
 
-from agent.base.agent_base_prompts import ANALYSIS_PROMPT, DECISION_PROMPT, FINAL_PROMPT
+from agents.base.agent_base_prompts import ANALYSIS_PROMPT, DECISION_PROMPT, FINAL_PROMPT
 
 # ✅ LangGraph 호환을 위해 LangChain 메시지는 유지
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
@@ -72,7 +72,7 @@ class AgentBase(ABC):
         self.mcp = MCPManager().get_instance()
         
         # ✅ agents.yaml 설정 우선 적용
-        from agent.config.agent_config_loader import AgentConfigLoader
+        from agents.config.agent_config_loader import AgentConfigLoader
         
         yaml_config = AgentConfigLoader.get_agent_config(self.name)
         
@@ -112,7 +112,14 @@ class AgentBase(ABC):
     # =============================
     
     def _langchain_to_dict(self, message) -> Dict[str, str]:
-        """LangChain 메시지를 딕셔너리로 변환"""
+        """LangChain 메시지를 딕셔너리로 변환
+        
+        Args:
+            message: LangChain 메시지 객체
+            
+        Returns:
+            Dict[str, str]: {"role": role, "content": content} 형태의 딕셔너리
+        """
         if isinstance(message, HumanMessage):
             return {"role": "user", "content": message.content}
         elif isinstance(message, AIMessage):
@@ -122,85 +129,114 @@ class AgentBase(ABC):
         elif isinstance(message, ToolMessage):
             return {"role": "tool", "content": message.content}
         else:
-            return {"role": "user", "content": str(message)}    
+            return {"role": "user", "content": str(message)}
+    
+    def _convert_messages_to_dict(self, messages: List) -> List[Dict[str, str]]:
+        """메시지 리스트를 딕셔너리 리스트로 일괄 변환
+        
+        Args:
+            messages: LangChain 메시지 리스트
+            
+        Returns:
+            List[Dict[str, str]]: 변환된 딕셔너리 리스트
+        """
+        return [self._langchain_to_dict(msg) for msg in messages]
         
     # =============================
     # Message 포맷팅 및 LLM 호출 (Debug용)
     # =============================
     def _pretty_messages(self, messages: List) -> str:
-        """LangChain 메시지 리스트를 JSON 문자열로 예쁘게 변환"""
-        converted = []
-        for msg in messages:
-            converted.append(self._langchain_to_dict(msg))
+        """LangChain 메시지 리스트를 JSON 문자열로 예쁘게 변환
+        
+        Args:
+            messages: LangChain 메시지 리스트
+            
+        Returns:
+            str: JSON 형태의 문자열
+        """
+        converted = self._convert_messages_to_dict(messages)
         return json.dumps(converted, ensure_ascii=False, indent=2)
 
-    def _call_llm(
+    def _prepare_llm_params(
         self,
-        messages: List,
-        system_prompt: Optional[str] = None,
+        use_agent_config: bool = True,
         stream: Optional[bool] = None,
         format: Optional[str] = None,
         **kwargs
-    ) -> str:
-        """
-        LLM 호출 (동기 방식)
+    ) -> Dict[str, Any]:
+        """LLM 호출 파라미터 준비
         
-        우선순위:
-        1. 메서드 호출 시 전달된 kwargs
-        2. Agent별 llm_config
-        3. 전역 설정 (LLMHelper 기본값)
+        Args:
+            use_agent_config: Agent 설정 사용 여부
+            stream: 스트리밍 모드
+            format: 응답 포맷
+            **kwargs: 추가 파라미터
+            
+        Returns:
+            Dict[str, Any]: 준비된 LLM 파라미터
         """
-        # Agent 설정과 kwargs 병합 (kwargs가 우선)
-        llm_params = {**self.llm_config, **kwargs}
+        # Agent 설정 사용 여부에 따라 기본값 설정
+        if use_agent_config:
+            llm_params = {**self.llm_config, **kwargs}
+        else:
+            llm_params = {**kwargs}
         
         # stream, format 명시적 처리
         if stream is not None:
             llm_params["stream"] = stream
         if format is not None:
             llm_params["format"] = format
+            
+        return llm_params
+    
+    def _call_llm(
+        self,
+        messages: List,
+        stream: Optional[bool] = None,
+        format: Optional[str] = None,
+        **kwargs
+    ) -> str:
+        """LLM 호출 (동기 방식)
+        
+        우선순위:
+        1. 메서드 호출 시 전달된 kwargs
+        2. Agent별 llm_config
+        3. 전역 설정 (LLMHelper 기본값)
+        
+        Args:
+            messages: LangChain 메시지 리스트
+            stream: 스트리밍 모드
+            format: 응답 포맷
+            **kwargs: 추가 LLM 파라미터
+            
+        Returns:
+            str: LLM 응답
+        """
+        llm_params = self._prepare_llm_params(
+            use_agent_config=True,
+            stream=stream,
+            format=format,
+            **kwargs
+        )
         
         logger.debug(f"[{self.name}] LLM Call Parameters: {llm_params}")
         
         # LangChain 메시지를 딕셔너리로 변환
-        formatted_messages = [self._langchain_to_dict(msg) for msg in messages]
+        formatted_messages = self._convert_messages_to_dict(messages)
         
-        # system_prompt가 있으면 맨 앞에 추가
-        if system_prompt:
-            formatted_messages.insert(0, {"role": "system", "content": system_prompt})
+        return LLMHelper.invoke_with_history(
+            history=formatted_messages,
+            **llm_params
+        )
         
-        # 마지막 user 메시지를 prompt로, 나머지를 history로
-        if not formatted_messages:
-            return ""
-        
-        last_msg = formatted_messages[-1]
-        history = formatted_messages[:-1] if len(formatted_messages) > 1 else []
-        
-        if last_msg["role"] == "user":
-            return LLMHelper.invoke_with_history(
-                prompt=last_msg["content"],
-                history=history,
-                system_prompt=None,  # 이미 history에 포함됨
-                **llm_params
-            )
-        else:
-            # 마지막이 user가 아니면 전체를 history로
-            return LLMHelper.invoke_with_history(
-                prompt="",
-                history=formatted_messages,
-                system_prompt=None,
-                **llm_params
-            )
-    
     def _call_llm_with_fixed_params(
         self,
         messages: List,
-        system_prompt: Optional[str] = None,
         stream: bool = False,
         format: str = "",
         **fixed_kwargs
     ) -> str:
-        """
-        LLM 호출 (고정 파라미터)
+        """LLM 호출 (고정 파라미터)
         
         ⭐ 핵심: Agent llm_config를 무시하고 고정값만 사용
         
@@ -213,48 +249,50 @@ class AgentBase(ABC):
         3. 전역 설정 (LLMHelper 기본값)
         
         Args:
-            messages: 메시지 리스트
-            system_prompt: 시스템 프롬프트
+            messages: LangChain 메시지 리스트
             stream: 스트리밍 (기본: False=전체 응답)
             format: 포맷 (기본: ""=텍스트, "json"=JSON 강제)
             **fixed_kwargs: 고정 파라미터 (temperature 등)
+            
+        Returns:
+            str: LLM 응답
         """
-        # ⭐ Agent llm_config를 무시하고 fixed_kwargs만 사용
-        llm_params = {**fixed_kwargs}  # Agent 설정 무시!
-        
-        # stream, format은 이 메서드의 파라미터 사용
-        llm_params["stream"] = stream
-        llm_params["format"] = format
+        llm_params = self._prepare_llm_params(
+            use_agent_config=False,  # Agent 설정 무시!
+            stream=stream,
+            format=format,
+            **fixed_kwargs
+        )
         
         logger.debug(f"[{self.name}] LLM Call (FIXED PARAMS): {llm_params}")
         logger.info(f"[{self.name}] Using fixed parameters (ignoring Agent config)")
         
         # LangChain 메시지를 딕셔너리로 변환
-        formatted_messages = [self._langchain_to_dict(msg) for msg in messages]
+        formatted_messages = self._convert_messages_to_dict(messages)
         
-        if system_prompt:
-            formatted_messages.insert(0, {"role": "system", "content": system_prompt})
+        return LLMHelper.invoke_with_history(
+            history=formatted_messages,
+            **llm_params
+        )
+
+    # =============================
+    # 상태 관리 헬퍼 메서드
+    # =============================
+    
+    def _add_message_to_state(self, state: AgentState, message) -> AgentState:
+        """상태에 메시지를 추가하고 global_messages 업데이트
         
-        if not formatted_messages:
-            return ""
-        
-        last_msg = formatted_messages[-1]
-        history = formatted_messages[:-1] if len(formatted_messages) > 1 else []
-        
-        if last_msg["role"] == "user":
-            return LLMHelper.invoke_with_history(
-                prompt=last_msg["content"],
-                history=history,
-                system_prompt=None,
-                **llm_params
-            )
-        else:
-            return LLMHelper.invoke_with_history(
-                prompt="",
-                history=formatted_messages,
-                system_prompt=None,
-                **llm_params
-            )
+        Args:
+            state: 현재 상태
+            message: 추가할 LangChain 메시지
+            
+        Returns:
+            AgentState: 업데이트된 상태
+        """
+        global_messages = state.get("global_messages", [])
+        global_messages.append(message)
+        state["global_messages"] = global_messages
+        return state
 
     # =============================
     # 멀티턴 실행 파이프라인
@@ -312,20 +350,25 @@ class AgentBase(ABC):
     # =============================
     
     async def execute_multi_turn(self, state: AgentState) -> AgentState:
-        """멀티턴 실행 플로우"""
-        messages = state.get("messages", [])
+        """멀티턴 실행 플로우 - global_messages 사용"""
         
-        logger.info(f"[{self.name}] Messages count: {len(messages)}")
+        # ✅ global_messages 사용 (없으면 messages로 폴백)
+        global_messages = state.get("global_messages", [])
+        if not global_messages:
+            global_messages = state.get("messages", [])
+            state["global_messages"] = global_messages
         
-        # ✅ 매번 Agent 진입 시 역할 정의 추가 (전체 히스토리 유지)
+        logger.info(f"[{self.name}] Global messages count: {len(global_messages)}")
+        
+        # ✅ 현재 에이전트의 역할을 SystemMessage로 맨 앞에 추가
         agent_role = self.get_agent_role_prompt()
         system_msg = SystemMessage(content=agent_role)
         
-        # 맨 앞에 추가
-        state["messages"] = [system_msg] + messages
-        messages = state["messages"]
+        # 맨 앞에 SystemMessage 삽입
+        global_messages = [system_msg] + global_messages
+        state["global_messages"] = global_messages
         
-        logger.info(f"[{self.name}] ✅ Added agent role as system message")
+        logger.info(f"[{self.name}] ✅ Added agent role as SystemMessage at the beginning")
         
         # MCP 도구 목록 조회
         available_tools = await self._list_mcp_tools()
@@ -348,13 +391,18 @@ class AgentBase(ABC):
             logger.info(f"\n{'='*60}")
             logger.info(f"[{self.name}] Iteration {current_iteration}/{self.max_iterations}")
             logger.info(f"{'='*60}")
+            
+            # ✅ global_messages를 사용
+            global_messages = state.get("global_messages", [])
+            
             # Step 1: 요구사항 분석
             try:
-                logger.info("📋 Analyzing Input Message\n" + self._pretty_messages(messages))
-                analyzed_request = await self._analyze_request(messages, available_tools)
+                logger.info("📋 Analyzing Input Message\n" + self._pretty_messages(global_messages))
+                analyzed_request = await self._analyze_request(state, global_messages, available_tools)
                 analyzed_request = self._remove_think_tag(analyzed_request)
                 
                 logger.info(f"📋 Analyzed Request: {analyzed_request}")
+                
             except Exception as e:
                 logger.error(f"[{self.name}] Request analysis failed: {e}")
                 state = StateBuilder.add_error(state, e, self.name)
@@ -362,106 +410,172 @@ class AgentBase(ABC):
             
             # Step 2: Agent 의사결정
             try:
-                logger.info("📋 MakeDecision Input Message\n" + self._pretty_messages(messages))
-                decision = await self._make_decision(messages, available_tools)
+                logger.info("📋 MakeDecision Input Message\n" + self._pretty_messages(global_messages))
+                decision = await self._make_decision(state, global_messages, available_tools)
                 
                 logger.info(f"🤔 Decision: {decision.action.value}")
                 logger.info(f"   Reasoning: {decision.reasoning}")
+                
             except Exception as e:
                 logger.error(f"[{self.name}] Decision making failed: {e}")
                 state = StateBuilder.add_error(state, e, self.name)
                 break
             
-            # Step 2: 액션 실행
+            # Step 3: 액션 실행
             if decision.action == AgentAction.USE_TOOL:
-                logger.info(f"🔧 Executing tool: {decision.tool_name}")
-                logger.info(f"   Arguments: {decision.tool_arguments}")
-                
-                try:
-                    tool_result = await self._execute_mcp_tool(
-                        decision.tool_name,
-                        decision.tool_arguments
-                    )
-                    
-                    state = StateBuilder.add_tool_call(
-                        state,
-                        tool_name=decision.tool_name,
-                        arguments=decision.tool_arguments,
-                        result=tool_result
-                    )
-                    
-                    tool_message = ToolMessage(
-                        content=f"Tool: {decision.tool_name}\nResult: {tool_result}",
-                        tool_call_id=decision.tool_name
-                    )
-                    messages.append(tool_message)
-                    state["messages"] = messages
-                    
-                    logger.info(f"✅ Tool executed successfully")
-                    
-                except Exception as e:
-                    logger.error(f"[{self.name}] Tool execution failed: {e}")
-                    state = StateBuilder.add_error(state, e, self.name)
-                    
-                    error_message = ToolMessage(
-                        content=f"Tool: {decision.tool_name}\nError: {str(e)}",
-                        tool_call_id=decision.tool_name
-                    )
-                    messages.append(error_message)
-                    state["messages"] = messages
-                
+                state = await self._execute_tool_action(state, decision)
                 continue
             
             elif decision.action == AgentAction.DELEGATE:
-                logger.info(f"🔀 Delegating to agent: {decision.next_agent}")
-                logger.info(f"   Reason: {decision.reasoning}")
-                
-                # ✅ 메시지 초기화하지 않고 그대로 유지!
-                delegation_msg = AIMessage(
-                    content=f"[내부 위임] {decision.next_agent}에게 작업을 위임합니다.\n이유: {decision.reasoning}"
-                )
-                messages.append(delegation_msg)
-                state["messages"] = messages
-                
-                # ✅ delegation 메타데이터 설정
-                state["previous_agent"] = self.name
-                state["next_agent"] = decision.next_agent
-                state["delegation_reason"] = decision.reasoning
-                state["status"] = ExecutionStatus.RUNNING
-                state["timestamp"] = datetime.now()
-                
-                logger.info(f"[{self.name}] Delegation: next_agent={state.get('next_agent')}, status={state.get('status')}")
-                logger.info(f"[{self.name}] ✅ Full conversation history preserved ({len(messages)} messages)")
-                return state
+                return await self._execute_delegate_action(state, decision)
                 
             elif decision.action == AgentAction.RESPOND:
-                logger.info("✅ Generating final response")
-                
-                try:
-                    final_response = await self._generate_final_response(messages, available_tools)
-                    
-                    messages.append(AIMessage(content=final_response))
-                    state["messages"] = messages
-                    state["last_result"] = final_response
-                    
-                    state = StateBuilder.finalize_state(state, ExecutionStatus.SUCCESS)
-                    logger.info(f"[{self.name}] Total messages: {len(state['messages'])}")
-                    logger.info(f"💬 Final response generated ({len(final_response)} chars)")
-                    return state
-                    
-                except Exception as e:
-                    logger.error(f"[{self.name}] Final response generation failed: {e}")
-                    state = StateBuilder.add_error(state, e, self.name)
-                    state = StateBuilder.finalize_state(state, ExecutionStatus.FAILED)
-                    return state
+                return await self._execute_respond_action(state, global_messages, available_tools)
         
         # 최대 반복 횟수 도달
+        return await self._handle_max_iterations(state, global_messages)
+    
+    # =============================
+    # 액션 실행 메서드
+    # =============================
+    
+    async def _execute_tool_action(
+        self,
+        state: AgentState,
+        decision: AgentDecision
+    ) -> AgentState:
+        """Tool 실행 액션 처리
+        
+        Args:
+            state: 현재 상태
+            decision: Agent 의사결정 결과
+            
+        Returns:
+            AgentState: 업데이트된 상태
+        """
+        logger.info(f"🔧 Executing tool: {decision.tool_name}")
+        logger.info(f"   Arguments: {decision.tool_arguments}")
+        
+        try:
+            tool_result = await self._execute_mcp_tool(
+                decision.tool_name,
+                decision.tool_arguments
+            )
+            
+            state = StateBuilder.add_tool_call(
+                state,
+                tool_name=decision.tool_name,
+                arguments=decision.tool_arguments,
+                result=tool_result
+            )
+            
+            # global_messages에 추가
+            tool_message = ToolMessage(
+                content=f"Tool: {decision.tool_name}\\nResult: {tool_result}",
+                tool_call_id=decision.tool_name
+            )
+            state = self._add_message_to_state(state, tool_message)
+            
+            logger.info(f"✅ Tool executed successfully")
+            
+        except Exception as e:
+            logger.error(f"[{self.name}] Tool execution failed: {e}")
+            state = StateBuilder.add_error(state, e, self.name)
+            
+            error_message = ToolMessage(
+                content=f"Tool: {decision.tool_name}\\nError: {str(e)}",
+                tool_call_id=decision.tool_name
+            )
+            state = self._add_message_to_state(state, error_message)
+        
+        return state
+    
+    async def _execute_delegate_action(
+        self,
+        state: AgentState,
+        decision: AgentDecision
+    ) -> AgentState:
+        """Delegate 액션 처리
+        
+        Args:
+            state: 현재 상태
+            decision: Agent 의사결정 결과
+            
+        Returns:
+            AgentState: 업데이트된 상태
+        """
+        logger.info(f"🔀 Delegating to agent: {decision.next_agent}")
+        logger.info(f"   Reason: {decision.reasoning}")
+        
+        # delegation 메타데이터 설정
+        state["previous_agent"] = self.name
+        state["next_agent"] = decision.next_agent
+        state["delegation_reason"] = decision.reasoning
+        state["status"] = ExecutionStatus.RUNNING
+        state["timestamp"] = datetime.now()
+        
+        global_messages = state.get("global_messages", [])
+        logger.info(f"[{self.name}] Delegation: next_agent={state.get('next_agent')}, status={state.get('status')}")
+        logger.info(f"[{self.name}] ✅ Full conversation history preserved ({len(global_messages)} messages)")
+        
+        return state
+    
+    async def _execute_respond_action(
+        self,
+        state: AgentState,
+        global_messages: List,
+        available_tools: List[str]
+    ) -> AgentState:
+        """Respond 액션 처리
+        
+        Args:
+            state: 현재 상태
+            global_messages: 전역 메시지 리스트
+            available_tools: 사용 가능한 도구 목록
+            
+        Returns:
+            AgentState: 업데이트된 상태
+        """
+        logger.info("✅ Generating final response")
+        
+        try:
+            final_response = await self._generate_final_response(state, global_messages, available_tools)
+    
+            state["last_result"] = final_response
+            
+            # 최종 응답도 global_messages에 추가
+            state = self._add_message_to_state(state, AIMessage(content=final_response))
+            
+            state = StateBuilder.finalize_state(state, ExecutionStatus.SUCCESS)
+            logger.info(f"[{self.name}] Total messages: {len(state['global_messages'])}")
+            logger.info(f"💬 Final response generated ({len(final_response)} chars)")
+            
+        except Exception as e:
+            logger.error(f"[{self.name}] Final response generation failed: {e}")
+            state = StateBuilder.add_error(state, e, self.name)
+            state = StateBuilder.finalize_state(state, ExecutionStatus.FAILED)
+        
+        return state
+    
+    async def _handle_max_iterations(
+        self,
+        state: AgentState,
+        global_messages: List
+    ) -> AgentState:
+        """최대 반복 횟수 도달 시 처리
+        
+        Args:
+            state: 현재 상태
+            global_messages: 전역 메시지 리스트
+            
+        Returns:
+            AgentState: 업데이트된 상태
+        """
         logger.warning(f"⚠️ Max iterations ({self.max_iterations}) reached")
         
         try:
-            fallback_response = await self._generate_fallback_response(messages)
-            messages.append(AIMessage(content=fallback_response))
-            state["messages"] = messages
+            fallback_response = await self._generate_fallback_response(global_messages)
+            state = self._add_message_to_state(state, AIMessage(content=fallback_response))
             state["last_result"] = fallback_response
         except Exception as e:
             logger.error(f"[{self.name}] Fallback response generation failed: {e}")
@@ -470,66 +584,60 @@ class AgentBase(ABC):
         state = StateBuilder.finalize_state(state, ExecutionStatus.MAX_ITERATIONS)
         return state
 
+
     # =============================
     # Agent React Function 단계별 메서드
     # =============================
     
     async def _analyze_request(
         self,
+        state: AgentState,
         messages: List,
         available_tools: List[str]
     ) -> str:
-        """
-        요구사항 분석 (기본값 고정)
+        """요구사항 분석 (기본값 고정)
         
         ⭐ Agent 설정 무시, 항상 기본값 사용
         - temperature: 0.1 (매우 일관적)
-        - format: "" (텍스트)
+        - format: "json" (JSON 강제)
         - stream: False (전체 응답)
-        """
-        agent_role = self.get_agent_role_prompt()
         
-        system_prompt = f"""{agent_role}
-
----
-[현재 실행 중인 에이전트 ID]
-**{self.name}** (당신입니다)
-
-[현재 단계: 요구사항 분석]
-
-당신의 현재 에이전트의 역할을 바탕으로, 사용자의 메시지를 분석하여 다음을 파악하세요:
-
-1. 사용자가 원하는 것이 무엇인가?
-2. 이전 대화 맥락이 있다면 무엇인가?
-3. 현재 해결해야 할 구체적인 작업은 무엇인가?
-                                      
-출력 형식 (JSON):
-{{
-  "user_intent": "사용자가 원하는 것에 대한 명확한 설명",
-  "context_summary": "이전 대화에서 이미 수행된 작업 요약",
-  "next_task": "지금 수행해야 할 구체적인 작업"
-}}
-
-**중요:** 
-- 반드시 JSON 형식으로만 응답하세요. Markdown 백틱(```)은 사용하지 마세요. 
-- 절대 JSON 이외에 어떠한 정보, 텍스트는 포함하지 마세요.
-- JSON 출력은 1개의 객체여야 합니다.
-"""
+        Args:
+            state: 현재 상태
+            messages: LangChain 메시지 리스트
+            available_tools: 사용 가능한 도구 목록
+            
+        Returns:
+            str: 분석 결과 JSON 문자열
+            
+        Raises:
+            Exception: 분석 실패 시
+        """
+        system_prompt = ANALYSIS_PROMPT.format(name=self.name)
         
         try:
             logger.info(f"[{self.name}] 📋 Analyzing request with FIXED parameters")
+            messages.append(HumanMessage(content=system_prompt))
             
-            # ✅ 고정된 파라미터 사용
+            # global_messages 업데이트
+            state["global_messages"] = messages
+            
+            # 고정된 파라미터 사용
             response = await asyncio.to_thread(
                 self._call_llm_with_fixed_params,
                 messages,
-                system_prompt,
                 False,      # stream=False (전체 응답)
-                "json",         # format="" (텍스트, JSON 아님!)
-                temperature=0.1  # 기본값 고정
+                "json"      # format="json"
             )
             
             content = self._remove_think_tag(response)
+            
+            # 분석 결과를 메시지 히스토리에 추가
+            messages.append(AIMessage(content=content))
+            
+            # global_messages 업데이트
+            state["global_messages"] = messages
+            
             logger.info(f"[{self.name}] ✅ Request analysis completed")
             
             parsed = json.loads(content)
@@ -540,17 +648,27 @@ class AgentBase(ABC):
     
     async def _make_decision(
         self,
+        state: AgentState,
         messages: List,
         available_tools: List[str],
-        analyzed_request: str = ""
-    ) -> "AgentDecision":
-        """
-        Agent 의사결정 (기본값 고정)
+    ) -> AgentDecision:
+        """Agent 의사결정 (기본값 고정)
         
         ⭐ Agent 설정 무시, 항상 기본값 사용
         - temperature: 0.1 (매우 일관적)
         - format: "json" (JSON 강제)
         - stream: False (전체 응답)
+        
+        Args:
+            state: 현재 상태
+            messages: LangChain 메시지 리스트
+            available_tools: 사용 가능한 도구 목록
+            
+        Returns:
+            AgentDecision: Agent 의사결정 결과
+            
+        Raises:
+            Exception: 의사결정 실패 시
         """
         available_agents = self._get_available_agents()
         
@@ -562,20 +680,28 @@ class AgentBase(ABC):
         
         try:
             logger.info(f"[{self.name}] 🤔 Making decision with FIXED parameters")
+        
+            messages.append(HumanMessage(content=system_prompt))
             
-            # ✅ 고정된 파라미터 사용
+            # global_messages 업데이트
+            state["global_messages"] = messages
+            
+            # 고정된 파라미터 사용
             response = await asyncio.to_thread(
                 self._call_llm_with_fixed_params,
                 messages,
-                system_prompt,
                 False,       # stream=False (전체 응답)
-                "json",      # format="json" (JSON 강제)
-                temperature=0.1  # 기본값 고정
+                "json"       # format="json" (JSON 강제)
             )
             
             content = self._remove_think_tag(response)
-            logger.info(f"[{self.name}] ✅ Decision made successfully")
-            logger.info(f"📋 Decision Request: {content}")
+            logger.info(f"📋 Decision Response: {content}")
+            
+            # 의사 결과를 메시지 히스토리에 추가
+            messages.append(AIMessage(content=content))
+            
+            # global_messages 업데이트
+            state["global_messages"] = messages
             
             decision_json = json.loads(content)
             
@@ -607,11 +733,11 @@ class AgentBase(ABC):
     
     async def _generate_final_response(
         self,
+        state: AgentState,
         messages: List,
         tool_names: List[str]
     ) -> str:
-        """
-        최종 답변 생성 (Agent 설정 따름)
+        """최종 답변 생성 (Agent 설정 따름)
         
         ⭐ Agent의 llm_config 사용
         - 창의성 조정 가능
@@ -620,32 +746,42 @@ class AgentBase(ABC):
         
         각 Agent에서 llm_config를 다르게 설정하면
         이 메서드가 그에 따라 답변을 생성함
-        """
-        agent_role = self.get_agent_role_prompt()
         
-        system_prompt = f"""{agent_role}
-
----
-
-**[현재 단계: 최종 답변 생성]**
-
-당신의 역할을 바탕으로, 지금까지 수행한 작업의 결과를 사용자에게 전달하세요.
-
-**출력:** 순수 텍스트 응답
-"""
+        Args:
+            state: 현재 상태
+            messages: LangChain 메시지 리스트
+            tool_names: 사용 가능한 도구 이름 목록
+            
+        Returns:
+            str: 최종 답변 텍스트
+            
+        Raises:
+            Exception: 답변 생성 실패 시
+        """
+        system_prompt = FINAL_PROMPT
         
         try:
             logger.info(f"[{self.name}] 💬 Generating final response with Agent config")
             logger.info(f"[{self.name}] Using Agent's LLM settings: {self.llm_config}")
             
-            # ✅ Agent 설정을 따름 (_call_llm 사용)
+            messages.append(HumanMessage(content=system_prompt))
+            
+            # global_messages 업데이트
+            state["global_messages"] = messages
+            
+            # Agent 설정을 따름 (_call_llm 사용)
             response = await asyncio.to_thread(
                 self._call_llm,
                 messages,
-                system_prompt,
                 None,   # stream: Agent 설정 따름
                 ""      # format: 텍스트 응답
             )
+            
+            # 최종 답변 결과를 메시지 히스토리에 추가
+            messages.append(AIMessage(content=response))
+            
+            # global_messages 업데이트
+            state["global_messages"] = messages
             
             logger.info(f"[{self.name}] ✅ Final response generated")
             return self._remove_think_tag(response)
@@ -654,7 +790,14 @@ class AgentBase(ABC):
             raise
     
     async def _generate_fallback_response(self, messages: List) -> str:
-        """최대 반복 횟수 도달 시 폴백 응답"""
+        """최대 반복 횟수 도달 시 폴백 응답 생성
+        
+        Args:
+            messages: LangChain 메시지 리스트
+            
+        Returns:
+            str: 폴백 응답 텍스트
+        """
         return f"""처리 과정이 예상보다 복잡하여 {self.max_iterations}회 반복 제한에 도달했습니다.
 지금까지 수집한 정보를 바탕으로 답변드리겠습니다.
 
@@ -666,7 +809,13 @@ class AgentBase(ABC):
     
     @abstractmethod
     def get_agent_role_prompt(self) -> str:
-        """Agent 역할 정의 Prompt"""
+        """Agent 역할 정의 Prompt 반환
+        
+        각 Agent는 이 메서드를 구현하여 자신의 역할을 정의해야 합니다.
+        
+        Returns:
+            str: Agent의 역할을 설명하는 프롬프트 텍스트
+        """
         pass
 
     # =============================
@@ -674,22 +823,31 @@ class AgentBase(ABC):
     # =============================
     
     def _get_available_agents(self) -> str:
-        """
-        현재 Agent에서 위임 가능한 다른 Agent 목록
+        """현재 Agent에서 위임 가능한 다른 Agent 목록 반환
+        
+        allowed_agents 속성이 있으면 해당 목록을 사용하고,
+        없으면 등록된 모든 Agent를 사용합니다.
+        자기 자신은 항상 목록에서 제외됩니다.
+        
+        Returns:
+            str: 위임 가능한 Agent 목록을 포함하는 포맷팅된 텍스트
         """
         if hasattr(self, "allowed_agents"):
             # allowed_agents가 있어도 자기 자신은 무조건 제외해야 함
             agents = [name for name in self.allowed_agents if name != self.name]
         else:
             # 기본: 모든 등록된 Agent (자신 제외)
-            from agent.registry.agent_registry import AgentRegistry
+            from agents.registry.agent_registry import AgentRegistry
             all_agents = AgentRegistry.list_agents()
             agents = [name for name in all_agents if name != self.name]
             
         logger.info(f"{agents} available for delegation from {self.name}")
         
         if not agents:
-            return "없음 (이 에이전트가 모든 작업을 직접 처리해야 함)"
+            return f"""없음 (이 에이전트가 모든 작업을 직접 처리해야 함)
+
+**당신의 정체성: {self.name}**
+**위임 불가: 자기 자신({self.name})에게는 절대 위임할 수 없습니다.**"""
         
         # 포맷팅
         agent_list = "\n".join([f"- {agent}" for agent in agents])
@@ -698,11 +856,21 @@ class AgentBase(ABC):
 [위임 가능한 다른 Agent 목록]
 {agent_list}
 
-**주의:** 위 목록에 없는 Agent(특히 자기 자신)에게는 절대 위임할 수 없습니다.
+**당신의 정체성: {self.name}**
+**주의:** 위 목록에 없는 Agent(특히 자기 자신인 {self.name})에게는 절대 위임할 수 없습니다.
 """
     
     async def _list_mcp_tools(self) -> List[Dict[str, Any]]:
-        """MCP 도구 목록 조회"""
+        """MCP 도구 목록 조회 및 필터링
+        
+        allowed_tools 속성을 확인하여 허용된 도구만 반환합니다.
+        - 'ALL': 모든 도구 허용
+        - []: 도구 없음
+        - [도구명 목록]: 해당 도구만 허용
+        
+        Returns:
+            List[Dict[str, Any]]: 도구 명세 리스트 (function call 형식)
+        """
         try:
             tools = await self.mcp.list_tools()
             tools_spec = []
@@ -747,7 +915,18 @@ class AgentBase(ABC):
         tool_name: str,
         tool_args: Dict[str, Any]
     ) -> Any:
-        """MCP 도구 실행"""
+        """MCP 도구 실행
+        
+        Args:
+            tool_name: 실행할 도구 이름
+            tool_args: 도구 인자 딕셔너리
+            
+        Returns:
+            Any: 도구 실행 결과
+            
+        Raises:
+            Exception: 도구 실행 실패 시
+        """
         try:
             result = await self.mcp.call_tool(tool_name, tool_args)
             logger.info(f"[{self.name}] Tool '{tool_name}' executed successfully")
@@ -757,12 +936,17 @@ class AgentBase(ABC):
             raise
     
     def _remove_think_tag(self, text: str) -> str:
-        """
-        </think> 종료 태그를 기준으로 그 뒤의 텍스트(진짜 결과)만 추출합니다.
-        그 후 JSON 형식('{ ... }')만 정확히 발라냅니다.
+        """</think> 태그 제거 및 JSON 추출
+        
+        LLM 응답에서 <think> 태그를 제거하고 순수한 JSON만 추출합니다.
+        
+        Args:
+            text: 원본 텍스트
+            
+        Returns:
+            str: 태그가 제거된 깨끗한 텍스트
         """
         # 1. </think>가 있다면, 그 뒤의 내용만 취합니다.
-        #    (앞에 있는 <think> 블록이나 중복된 JSON은 모두 무시됨)
         if "</think>" in text:
             text = text.rsplit("</think>", 1)[-1]
         
@@ -774,7 +958,6 @@ class AgentBase(ABC):
         text = text.strip()
         
         # 4. 순수한 JSON 객체만 추출 (첫 '{' 부터 마지막 '}' 까지)
-        #    이렇게 하면 "Here is the JSON:" 같은 군더더기 텍스트가 붙어도 제거됩니다.
         start_idx = text.find("{")
         end_idx = text.rfind("}")
         

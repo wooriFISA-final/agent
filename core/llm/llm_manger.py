@@ -236,9 +236,7 @@ class LLMHelper:
     
     @staticmethod
     def invoke_with_history(
-        prompt: str,
         history: List[Dict[str, str]],
-        system_prompt: Optional[str] = None,
         **kwargs
     ) -> str:
         """
@@ -258,16 +256,13 @@ class LLMHelper:
         # 메시지 구성
         messages = []
         
-        # 시스템 프롬프트
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
         
         # 히스토리 추가
         messages.extend(history)
         
-        # 현재 프롬프트
-        if prompt:
-            messages.append({"role": "user", "content": prompt})
+        # # 현재 프롬프트
+        # if prompt:
+        #     messages.append({"role": "user", "content": prompt})
         
         return LLMManager._call_ollama_chat(
             messages=messages,

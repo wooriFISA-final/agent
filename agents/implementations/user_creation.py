@@ -1,8 +1,8 @@
 import logging
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage
-from agent.base.agent_base import AgentBase, BaseAgentConfig, AgentState
-from agent.registry.agent_registry import AgentRegistry
+from agents.base.agent_base import AgentBase, BaseAgentConfig, AgentState
+from agents.registry.agent_registry import AgentRegistry
 
 logger = logging.getLogger("agent_system")
 
