@@ -30,10 +30,6 @@ class AgentSystemConfig(BaseSettings):
     LOG_LEVEL: str = Field(..., description="Logging level")
     LOG_FILE: Optional[str] = Field(None, description="Log 파일 경로")
 
-    # Graph Settings
-    GRAPH_YAML_PATH: Path = Field(..., description="Graph yaml 파일 경로")
-    MAX_GRAPH_ITERATIONS: int = Field(..., description="최대 그래프 반복 횟수")
-
     # MCP (Mission Control Protocol)
     MCP_URL: HttpUrl = Field(..., description="URL for the MCP server")
     MCP_CONNECTION_RETRIES: int = Field(..., description="MCP 연결 재시도 횟수")
