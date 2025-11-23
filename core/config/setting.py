@@ -55,8 +55,4 @@ class AgentSystemConfig(BaseSettings):
     # Agent Registry
     AGENTS_MODULE_PATH: str = Field(..., description="Agent 구현 모듈 경로 (예: agents.implementations)")
     
-    AGENTS_CONFIG_PATH: Path = Field(
-        default=Path("agents/config/agents.yaml"),
-        description="Agent 설정 YAML 파일 경로"
-    )
 settings = AgentSystemConfig()
