@@ -209,26 +209,31 @@ class AgentBase:
 ```
 
 **주요 메서드:**
-- `execute()`: Agent 실행 (오버라이드 필수)
-- `_create_llm()`: LLM 인스턴스 생성
-- `_load_tools()`: MCP Tools 로드
+- `execute_multi_turn()`: Multi-Turn Agent 실행
+- `run()`: Agent 로직 실행
+- `_list_mcp_tools()`: MCP Tools 로드
+- `_execute_mcp_tool()`: MCP Tools 실행
+
 
 #### Agent 구현 예시
 
 ```python
 # agents/implementations/user_creation.py
-class UserCreationAgent(AgentBase):
-    async def execute(self, state: AgentState) -> AgentState:
-        # 1. 사용자 메시지 가져오기
-        messages = state["global_messages"]
+@AgentRegistry.register("user_check_agent")
+class UserCheckAgent(AgentBase):
+    def __init__(self, config: BaseAgentConfig):
+        super().__init__(config)
+        # Agent가 사용 가능한 Tool(Operator_id)
+        self.allowed_tools = ["get_user"]
         
-        # 2. LLM 호출
-        response = await self.llm.ainvoke(messages)
-        
-        # 3. 상태 업데이트
-        state["global_messages"].append(response)
-        
-        return state
+        # Agent가 이동 가능한 다른 Agent (자기 자신 제외)
+        self.allowed_agents = ["user_creation"]
+    
+    ....
+
+    def get_agent_role_prompt(self) -> str:
+        """UserCheckAgent의 역할 정의"""
+        return """당신은 사용자 조회 전문 Agent입니다."""
 ```
 
 ### 2. Graph (graph/)
@@ -407,7 +412,7 @@ async def chat_endpoint(request: Request, chat_request: ChatRequest):
 ```python
 # Graph가 실행되면:
 1. entry_point 노드 실행 (user_create_agent)
-2. Agent.execute() 호출
+2. Agent.execute_multi_turn() 호출
 3. Router가 다음 노드 결정
 4. 다음 노드 실행 또는 종료
 ```
@@ -415,18 +420,13 @@ async def chat_endpoint(request: Request, chat_request: ChatRequest):
 #### 4. Agent 실행 (agents/)
 
 ```python
-async def execute(self, state: AgentState) -> AgentState:
-    # 1. 메시지 가져오기
+async def execute_multi_turn(self, state: AgentState) -> AgentState:
+    # 메시지 가져오기
     messages = state["global_messages"]
     
-    # 2. MCP Tool 호출 (필요시)
-    if need_tool:
-        result = await mcp_manager.call_tool("get_user", {"id": "123"})
+    ...
     
-    # 3. LLM 호출
-    response = await self.llm.ainvoke(messages)
-    
-    # 4. 상태 업데이트
+    # 상태 업데이트
     state["global_messages"].append(response)
     state["last_agent"] = self.name
     
@@ -443,32 +443,28 @@ async def execute(self, state: AgentState) -> AgentState:
 
 ```python
 # agents/implementations/my_agent.py
-from agents.base.agent_base import AgentBase
-from agents.config.base_config import AgentState
+import logging
+from typing import Dict, Any
+from langchain_core.messages import HumanMessage
+from agents.base.agent_base import AgentBase, BaseAgentConfig, AgentState
+from agents.registry.agent_registry import AgentRegistry
 
+@AgentRegistry.register("my_agent")
 class MyAgent(AgentBase):
-    """내 Agent 설명"""
+    def __init__(self, config: BaseAgentConfig):
+        super().__init__(config)
+        # Agent가 사용 가능한 Tool(Operator_id)
+        self.allowed_tools = ["get_user"]
+        
+        # Agent가 이동 가능한 다른 Agent (자기 자신 제외)
+        self.allowed_agents = ["user_creation"]
     
-    async def execute(self, state: AgentState) -> AgentState:
-        """Agent 실행 로직"""
-        
-        # 1. 현재 상태 확인
-        messages = state["global_messages"]
-        session_id = state["session_id"]
-        
-        # 2. 비즈니스 로직 실행
-        # ... your logic here ...
-        
-        # 3. LLM 호출
-        response = await self.llm.ainvoke(messages)
-        
-        # 4. 상태 업데이트
-        state["global_messages"].append(response)
-        state["last_agent"] = self.name
-        
-        return state
-```
+    ....
 
+    def get_agent_role_prompt(self) -> str:
+        """UserCheckAgent의 역할 정의"""
+        return """당신은 사용자 조회 전문 Agent입니다."""
+```
 #### Step 2: Agent 설정 추가
 
 ```yaml
@@ -509,57 +505,6 @@ edges:
       paths:
         my_agent: my_agent
         END: __end__
-```
-
-### 2. MCP Tool 사용하기
-
-```python
-class MyAgent(AgentBase):
-    async def execute(self, state: AgentState) -> AgentState:
-        # MCP Tool 호출
-        from core.mcp.mcp_manager import MCPManager
-        
-        mcp = MCPManager.get_instance()
-        
-        # Tool 호출
-        result = await mcp.call_tool(
-            name="get_user_data",
-            args={"user_id": "123"}
-        )
-        
-        # 결과 사용
-        user_data = result["data"]
-        
-        # ... 나머지 로직 ...
-        
-        return state
-```
-
-### 3. Agent 테스트
-
-```python
-# tests/agents/test_my_agent.py
-import pytest
-from agents.implementations.my_agent import MyAgent
-from agents.config.base_config import StateBuilder
-
-@pytest.mark.asyncio
-async def test_my_agent():
-    # Agent 생성
-    agent = MyAgent(name="my_agent", config=mock_config)
-    
-    # 초기 상태
-    state = StateBuilder.create_initial_state(
-        messages=[HumanMessage(content="테스트")],
-        session_id="test-session"
-    )
-    
-    # 실행
-    result = await agent.execute(state)
-    
-    # 검증
-    assert len(result["global_messages"]) > 0
-    assert result["last_agent"] == "my_agent"
 ```
 
 ---
@@ -613,10 +558,10 @@ edges:
 entry_point: agent_a
 ```
 
-### 3. Router 만들기
+### 3. Router 만들기 (DynamicRouter 고정)
 
 Router는 다음 노드를 동적으로 결정합니다.
-
+-> 현재는 DynamicRouter를 고정하기 때문에 별도로 구현할 필요가 없음.
 ```python
 # graph/routing/my_router.py
 from graph.routing.router_base import RouterBase
@@ -638,37 +583,6 @@ class MyRouter(RouterBase):
             return "check_agent"
         else:
             return "process_agent"
-```
-
-### 4. Graph 테스트
-
-```python
-# tests/graph/test_my_graph.py
-import pytest
-from graph.factory import mk_graph
-
-@pytest.mark.asyncio
-async def test_my_graph():
-    # Graph 생성
-    graph = mk_graph(
-        yaml_path="graph/config/my_graph.yaml",
-        checkpointer=MemorySaver()
-    )
-    
-    # 초기 상태
-    input_state = {
-        "global_messages": [HumanMessage(content="테스트")],
-        "session_id": "test"
-    }
-    
-    # 실행
-    result = await graph.ainvoke(
-        input_state,
-        config={"configurable": {"thread_id": "test"}}
-    )
-    
-    # 검증
-    assert result["global_messages"][-1].content
 ```
 
 ---
@@ -713,10 +627,26 @@ docker-compose down
 | 변수 | 설명 | 기본값 |
 |------|------|--------|
 | `AGENT_ENVIRONMENT` | 환경 (development/production) | development |
-| `AGENT_API_PORT` | API 포트 | 8080 |
-| `AGENT_LLM_MODEL` | LLM 모델 | qwen3:8b |
+| `AGENT_DEBUG` | Debug | True |
+| `AGENT_API_HOST` | Agent 서버 Host | 0.0.0.0 |
+| `AGENT_API_PORT` | Agent 서버 Port | 8080 |
+| `AGENT_API_VERSION` | Agent 서버 버전 | 2.1.0 |
+| `AGENT_LOG_LEVEL` | log 레벨 | 8080 |
+| `AGENT_LOG_FILE` | log 파일 위치 | logs/agent_system.log |
 | `AGENT_MCP_URL` | MCP 서버 URL | http://localhost:8888/mcp |
-
+| `AGENT_MCP_CONNECTION_RETRIES` | MCP 서버 연결 시도 횟수 | 5 |
+| `AGENT_MCP_CONNECTION_TIMEOUT` | MCP 서버 연결 시도 시간 | 2 |
+| `AGENT_LLM_PROVIDER` | LLM 모델 관리자 | Ollama |
+| `AGENT_LLM_MODEL` | LLM 모델명 | qwen3:8b |
+| `AGENT_LLM_API_BASE_URL` | LLM API URL | http://localhost:11434 |
+| `AGENT_LLM_TIMEOUT` | LLM 호출 시도 시간 | 180 |
+| `AGENT_LLM_TEMPERATURE` | LLM Temperature | 0.1 |
+| `AGENT_LLM_TOP_P` | LLM TOP_P | 0.1 |
+| `AGENT_LLM_TOP_K` | LLM TOP_K | 1 |
+| `AGENT_LLM_NUM_CTX` | LLM context_length | 40960 |
+| `AGENT_LLM_STREAM` | LLM Stream | False |
+| `AGENT_LLM_FORMAT` | LLM Output Format | "" |
+| `AGENT_AGENTS_MODULE_PATH` | Agent Module 경로 | agents.implementations |
 ---
 
 ## 트러블슈팅
@@ -753,7 +683,7 @@ docker-compose down
 ```
 
 **해결:**
-1. `graph.yaml` 문법 확인
+1. `plan_graph.yaml`, `report_graph.yaml` 문법 확인
 2. 참조하는 Agent가 등록되어 있는지 확인
 3. Router가 존재하는지 확인
 

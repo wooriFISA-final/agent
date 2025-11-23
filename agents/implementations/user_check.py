@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 from agents.base.agent_base import AgentBase, BaseAgentConfig, AgentState
 from agents.registry.agent_registry import AgentRegistry
 
