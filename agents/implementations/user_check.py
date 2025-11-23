@@ -21,7 +21,7 @@ class UserCheckAgent(AgentBase):
         super().__init__(config)
         self.allowed_tools = ["get_user"]
         
-        # ✅ 다른 Agent로만 위임 가능 (자기 자신 제외)
+        # 다른 Agent로만 위임이 가능합니다. (자기 자신은 제외됩니다.)
         self.allowed_agents = ["user_creation"]
 
     def validate_input(self, state: Dict[str, Any]) -> bool:

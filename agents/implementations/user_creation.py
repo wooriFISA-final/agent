@@ -23,7 +23,7 @@ class UserCreationAgent(AgentBase):
         # 사용 가능한 Tool 목록
         self.allowed_tools = ["create_user"]
         
-        # ✅ 위임 가능한 Agent 목록 추가
+        # 위임 가능한 Agent 목록을 추가합니다.
         self.allowed_agents = ["user_check"]
 
     def validate_input(self, state: Dict[str, Any]) -> bool:

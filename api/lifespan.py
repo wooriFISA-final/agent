@@ -84,6 +84,16 @@ async def lifespan(app: FastAPI):
     
     app.state = AppState()
 
+    # 0. Setup AWS Bedrock Authentication
+    import os
+    logger.info("🔑 Setting up AWS Bedrock authentication...")
+    api_key = settings.AWS_BEARER_TOKEN_BEDROCK
+    if api_key:
+        os.environ['AWS_BEARER_TOKEN_BEDROCK'] = api_key
+        logger.info("✅ AWS_BEARER_TOKEN_BEDROCK environment variable set")
+    else:
+        logger.warning("⚠️ AWS_BEARER_TOKEN_BEDROCK not configured in settings")
+
     # 1. Initialize Checkpointer
     app.state.checkpointer = MemorySaver()
     logger.info("✅ Global MemorySaver initialized")

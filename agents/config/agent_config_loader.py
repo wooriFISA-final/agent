@@ -44,8 +44,12 @@ class AgentConfigLoader:
     def __new__(cls, yaml_path: Optional[str] = None):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            if yaml_path:
-                cls._instance._load_configs(yaml_path)
+        
+        # 인스턴스가 이미 존재하더라도 yaml_path가 제공되면 설정을 다시 로드합니다.
+        # 이를 통해 그래프별로 다른 agent 설정을 적용할 수 있습니다.
+        if yaml_path:
+            cls._instance._load_configs(yaml_path)
+            
         return cls._instance
 
     def _load_configs(self, yaml_path: str):

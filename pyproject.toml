@@ -12,6 +12,7 @@ dependencies = [
     "authlib==1.6.5",
     "backports-tarfile==1.2.0 ; python_full_version < '3.12'",
     "beartype==0.22.5",
+    "boto3>=1.41.2",
     "cachetools==6.2.2",
     "certifi==2025.11.12",
     "cffi==2.0.0 ; platform_python_implementation != 'PyPy'",

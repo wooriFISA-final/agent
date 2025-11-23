@@ -84,13 +84,10 @@ agents:
       # - report # 비활성화된 태그 예시
 
     llm_config:
-      model: "qwen3:8b"
+      model: "gpt-oss-20b"
       temperature: 0.1
       top_p: 0.1
-      top_k: 10
-      num_ctx: 40960
       stream: false
-      format: ""
     
   user_check_agent:
     name: "user_check_agent"
@@ -106,11 +103,8 @@ agents:
       # - report
     
     llm_config:
-      model: "qwen3:8b"
+      model: "gpt-oss-20b"
       temperature: 0.1        
       top_p: 0.1
-      top_k: 10
-      num_ctx: 40960
       stream: false
-      format: ""
     
