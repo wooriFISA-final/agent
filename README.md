@@ -66,9 +66,16 @@ make docker-clean   # Docker 리소스 정리
 
 서버 실행 후 다음 엔드포인트를 사용할 수 있습니다:
 
+### 기본 엔드포인트
 - `GET /` - API 정보
 - `GET /health` - 헬스체크
-- `POST /chat` - 채팅
+
+### 채팅 엔드포인트 (멀티 그래프 지원)
+- `POST /chat` - 기본 그래프 사용 (하위 호환성)
+- `POST /chat/plan` - Plan 그래프 사용 (재무 계획)
+- `POST /chat/report` - Report 그래프 사용 (리포트 생성)
+
+### 세션 관리
 - `GET /chat/sessions` - 세션 목록
 - `GET /chat/session/{id}/history` - 대화 히스토리
 - `DELETE /chat/session/{id}` - 세션 삭제

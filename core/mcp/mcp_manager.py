@@ -19,6 +19,7 @@ class MCPManager:
     _url: Optional[str] = None
     _headers: Optional[Dict[str, str]] = None
     _connection_lock: Optional[asyncio.Lock] = None
+    _tool_call_lock: Optional[asyncio.Lock] = None  # ✅ Tool 호출 잠금
 
     # ---------------------------
     # 🔥 싱글톤 생성
@@ -26,7 +27,8 @@ class MCPManager:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._connection_lock = asyncio.Lock()  # 🔥 여기서 Lock 생성
+            cls._instance._connection_lock = asyncio.Lock()  # 연결 잠금
+            cls._instance._tool_call_lock = asyncio.Lock()   # ✅ Tool 호출 잠금
         return cls._instance
 
     @classmethod
@@ -121,29 +123,38 @@ class MCPManager:
         return self._client
 
     # ---------------------------
-    # 도구 호출 (자동 재시도)
+    # 도구 호출 (자동 재시도 + 동시성 안전)
     # ---------------------------
     async def call_tool(self, name: str, args: Dict[str, Any], max_retries: int = 3) -> Any:
-        for attempt in range(max_retries):
-            try:
-                await self.ensure_connected()
-                return await self.client.call_tool(name, args)
+        # Lock 없을 가능성 대비 안전장치
+        if self._tool_call_lock is None:
+            self._tool_call_lock = asyncio.Lock()
+        
+        # 🔒 Tool 호출 잠금 (동시 호출 방지)
+        async with self._tool_call_lock:
+            for attempt in range(max_retries):
+                try:
+                    await self.ensure_connected()
+                    logger.debug(f"🔧 Calling MCP tool '{name}' with args: {args}")
+                    result = await self.client.call_tool(name, args)
+                    logger.debug(f"✅ MCP tool '{name}' completed successfully")
+                    return result
 
-            except Exception as e:
-                error_msg = str(e).lower()
+                except Exception as e:
+                    error_msg = str(e).lower()
 
-                if any(x in error_msg for x in ['closed', 'connection', 'timeout', 'session']):
-                    logger.warning(f"MCP tool '{name}' failed (attempt {attempt+1}/{max_retries}): {e}")
-                    self._connected = False  # 연결 상태 초기화
+                    if any(x in error_msg for x in ['closed', 'connection', 'timeout', 'session']):
+                        logger.warning(f"MCP tool '{name}' failed (attempt {attempt+1}/{max_retries}): {e}")
+                        self._connected = False  # 연결 상태 초기화
 
-                    if attempt < max_retries - 1:
-                        await asyncio.sleep(2 ** attempt)
-                        continue
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                        else:
+                            raise
                     else:
+                        logger.error(f"MCP tool '{name}' execution error: {e}")
                         raise
-                else:
-                    logger.error(f"MCP tool '{name}' execution error: {e}")
-                    raise
 
     # ---------------------------
     # 도구 목록

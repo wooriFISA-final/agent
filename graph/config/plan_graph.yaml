@@ -1,0 +1,46 @@
+# ============================================
+# Plan Graph Configuration
+# ============================================
+# 재무 계획 관련 그래프
+
+# ============================================
+# Agent 노드 정의
+# ============================================
+nodes:
+  - name: user_create_agent
+    agent: user_create_agent
+    config:
+      max_iterations: 10
+      timeout: 300
+      
+  - name: user_check_agent
+    agent: user_check_agent
+    config:
+      max_iterations: 5
+      timeout: 200
+
+# ============================================
+# Edge 정의
+# ============================================
+edges:
+  # Direct edges
+  direct: []
+  
+  # Conditional edges (DynamicRouter 사용)
+  conditional:
+    - from: user_create_agent
+      router: DynamicRouter
+      paths:
+        user_check: user_check_agent
+        END: __end__
+    
+    - from: user_check_agent
+      router: DynamicRouter
+      paths:
+        user_creation: user_create_agent
+        END: __end__
+
+# ============================================
+# Graph 설정
+# ============================================
+entry_point: user_create_agent

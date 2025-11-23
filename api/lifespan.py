@@ -25,16 +25,41 @@ class AppState:
     """애플리케이션 상태를 관리하는 클래스
     
     Attributes:
-        graph: LangGraph 인스턴스
+        graphs: 여러 그래프를 관리하는 딕셔너리 (graph_name -> CompiledGraph)
         checkpointer: 메모리 체크포인터
         session_manager: 세션 관리자
         mcp_manager: MCP 관리자
     """
     def __init__(self):
-        self.graph = None
+        self.graphs: dict = {}  # 여러 그래프 지원
         self.checkpointer: Optional[MemorySaver] = None
         self.session_manager: Optional[SessionManager] = None
         self.mcp_manager: Optional[MCPManager] = None
+    
+    def get_graph(self, graph_name: str = "default"):
+        """그래프 이름으로 그래프 가져오기
+        
+        Args:
+            graph_name: 그래프 이름 (기본값: "default")
+            
+        Returns:
+            해당 이름의 그래프, 없으면 None
+        """
+        return self.graphs.get(graph_name)
+    
+    def add_graph(self, name: str, graph):
+        """그래프 추가
+        
+        Args:
+            name: 그래프 이름
+            graph: 컴파일된 그래프 인스턴스
+        """
+        self.graphs[name] = graph
+        logger.info(f"✅ Graph '{name}' added to AppState")
+    
+    def list_graphs(self):
+        """등록된 모든 그래프 이름 반환"""
+        return list(self.graphs.keys())
 
 
 @asynccontextmanager
@@ -84,31 +109,68 @@ async def lifespan(app: FastAPI):
                 logger.error(f"❌ Failed to connect to MCP after {settings.MCP_CONNECTION_RETRIES} attempts")
                 raise
 
-    # 4. Load agents.yaml configuration
-    logger.info("📋 Loading agents.yaml configuration...")
-    AgentConfigLoader(yaml_path=str(settings.AGENTS_CONFIG_PATH))
-    enabled_agents = AgentConfigLoader.get_enabled_agents()
-    logger.info(f"✅ Loaded {len(enabled_agents)} enabled agents from agents.yaml")
-    
-    # 5. Discover and register agents
+
+    # 4. Discover and register agents (모든 Agent 클래스 발견)
     logger.info("📦 Discovering agents...")
     AgentRegistry.auto_discover(module_path=settings.AGENTS_MODULE_PATH)
 
-    # 6. Discover and register routers
+    # 5. Discover and register routers
     logger.info("🔍 Discovering routers...")
     RouterRegistry.auto_discover()
     
-    # 7. Build the main agent graph
-    logger.info(f"🔧 Building agent graph from '{settings.GRAPH_YAML_PATH}'...")
-    app.state.graph = mk_graph(
-        yaml_path=str(settings.GRAPH_YAML_PATH),
-        checkpointer=app.state.checkpointer
-    )
-    if not app.state.graph:
-        logger.error("❌ Agent graph could not be built. Shutting down.")
+    # 6. Build multiple graphs with their own agent configurations
+    from pathlib import Path
+    base_path = Path(__file__).parent.parent  # agent/ 디렉토리
+    
+    graph_configs = {
+        "plan": {
+            "graph_yaml": "graph/config/plan_graph.yaml",
+            "agents_yaml": str(base_path / "agents/config/plan_agents.yaml")
+        },
+        "report": {
+            "graph_yaml": "graph/config/report_graph.yaml",
+            "agents_yaml": str(base_path / "agents/config/report_agents.yaml")
+        }
+    }
+    
+    for graph_name, config in graph_configs.items():
+        logger.info(f"🔧 Building '{graph_name}' graph...")
+        
+        # Load agent configuration for this graph
+        try:
+            logger.info(f"📋 Loading agents from '{config['agents_yaml']}'...")
+            AgentConfigLoader(yaml_path=config['agents_yaml'])
+            enabled_agents = AgentConfigLoader.get_enabled_agents()
+            logger.info(f"✅ Loaded {len(enabled_agents)} enabled agents for '{graph_name}'")
+        except FileNotFoundError:
+            logger.warning(f"⚠️ Agent config file not found: {config['agents_yaml']}")
+            logger.info(f"ℹ️  Skipping '{graph_name}' graph")
+            continue
+        except Exception as e:
+            logger.error(f"❌ Error loading agent config for '{graph_name}': {e}")
+            continue
+        
+        # Build graph with loaded agent configuration
+        try:
+            graph = mk_graph(
+                yaml_path=str(config['graph_yaml']),
+                checkpointer=app.state.checkpointer
+            )
+            if graph:
+                app.state.add_graph(graph_name, graph)
+                logger.info(f"✅ '{graph_name}' graph built successfully!")
+            else:
+                logger.warning(f"⚠️ Failed to build '{graph_name}' graph from '{config['graph_yaml']}'")
+        except FileNotFoundError:
+            logger.warning(f"⚠️ Graph config file not found: {config['graph_yaml']}")
+        except Exception as e:
+            logger.error(f"❌ Error building '{graph_name}' graph: {e}")
+    
+    if not app.state.graphs:
+        logger.error("❌ No graphs could be built. Shutting down.")
         return
-
-    logger.info("✅ Agent graph built successfully!")
+    
+    logger.info(f"✅ Total {len(app.state.graphs)} graph(s) built: {app.state.list_graphs()}")
     logger.info("🎉 Application startup complete.")
 
     yield

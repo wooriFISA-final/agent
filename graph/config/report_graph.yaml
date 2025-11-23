@@ -1,6 +1,7 @@
 # ============================================
-# Multi-Agent Graph Configuration
+# Report Graph Configuration
 # ============================================
+# 리포트 생성 관련 그래프
 
 # ============================================
 # Agent 노드 정의
@@ -22,7 +23,7 @@ nodes:
 # Edge 정의
 # ============================================
 edges:
-  # Direct edges (사용 안 함)
+  # Direct edges
   direct: []
   
   # Conditional edges (DynamicRouter 사용)
@@ -30,20 +31,16 @@ edges:
     - from: user_create_agent
       router: DynamicRouter
       paths:
-        user_check: user_check_agent  # ✅ 등록명 사용
+        user_check: user_check_agent
         END: __end__
     
     - from: user_check_agent
       router: DynamicRouter
       paths:
-        user_creation: user_create_agent  # ✅ 역방향도 가능
+        user_creation: user_create_agent
         END: __end__
 
 # ============================================
 # Graph 설정
 # ============================================
 entry_point: user_create_agent
-
-# finish_points는 DynamicRouter가 자동 처리하므로 불필요
-# finish_points:
-#   - user_check
