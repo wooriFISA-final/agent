@@ -76,7 +76,7 @@ class AgentBase(ABC):
         # ✅ agents.yaml 설정 우선 적용
         from agents.config.agent_config_loader import AgentConfigLoader
         
-        yaml_config = AgentConfigLoader.get_agent_config(self.name)
+        yaml_config = AgentConfigLoader.get_agent_config_from_current(self.name)
         
         if yaml_config:
             # agents.yaml 설정이 있으면 우선 적용
@@ -616,6 +616,7 @@ class AgentBase(ABC):
                 tool_config=bedrock_tool_config,  # toolConfig 전달
                 return_full_response=True,  # 전체 응답 받기
                 temperature=0.1,
+                top_p=0.1
             )
             
             # stopReason 확인

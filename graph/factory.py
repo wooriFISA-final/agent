@@ -15,7 +15,7 @@ from core.logging.logger import setup_logger
 logger = setup_logger()
 
 
-def mk_graph(yaml_path: str, checkpointer: Optional[BaseCheckpointSaver] = None):
+def mk_graph(yaml_path: str, checkpointer: Optional[BaseCheckpointSaver] = None, config_loader=None):
     """
     Creates an agent graph from a YAML configuration file.
 
@@ -23,11 +23,19 @@ def mk_graph(yaml_path: str, checkpointer: Optional[BaseCheckpointSaver] = None)
         yaml_path: The path to the YAML configuration file.
         checkpointer: An optional checkpointer instance for persisting graph state.
                       If None, a new MemorySaver will be used (for testing).
+        config_loader: An optional AgentConfigLoader instance for graph-specific agent configuration.
+                      If provided, it will be set as the current context.
 
     Returns:
         A compiled LangGraph object, or None if creation fails.
     """
     try:
+        # Set config loader context if provided
+        if config_loader:
+            from agents.config.agent_config_loader import AgentConfigLoader
+            AgentConfigLoader.set_current(config_loader)
+            logger.info(f"Set AgentConfigLoader context for graph from '{yaml_path}'")
+        
         config = _load_yaml_config(yaml_path)
         if not config:
             return None

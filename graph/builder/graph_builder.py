@@ -84,7 +84,7 @@ class GraphBuilder:
         try:
             from agents.config.agent_config_loader import AgentConfigLoader
             
-            yaml_config = AgentConfigLoader.get_agent_config(agent_name)
+            yaml_config = AgentConfigLoader.get_agent_config_from_current(agent_name)
             
             if yaml_config and not yaml_config.enabled:
                 logger.warning(

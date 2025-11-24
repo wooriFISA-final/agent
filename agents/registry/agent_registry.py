@@ -40,7 +40,7 @@ class AgentRegistry:
             
             # ✅ enabled 체크 추가
             from agents.config.agent_config_loader import AgentConfigLoader
-            yaml_config = AgentConfigLoader.get_agent_config(agent_name)
+            yaml_config = AgentConfigLoader.get_agent_config_from_current(agent_name)
             
             if yaml_config and not yaml_config.enabled:
                 logger.warning(
@@ -79,7 +79,7 @@ class AgentRegistry:
         
         enabled = []
         for agent_name in cls._agents.keys():
-            yaml_config = AgentConfigLoader.get_agent_config(agent_name)
+            yaml_config = AgentConfigLoader.get_agent_config_from_current(agent_name)
             if not yaml_config or yaml_config.enabled:
                 # yaml_config가 없거나 enabled=true인 경우
                 enabled.append(agent_name)
@@ -93,7 +93,7 @@ class AgentRegistry:
         
         result = []
         for agent_name in cls._agents.keys():
-            yaml_config = AgentConfigLoader.get_agent_config(agent_name)
+            yaml_config = AgentConfigLoader.get_agent_config_from_current(agent_name)
             if yaml_config and yaml_config.enabled and tag in yaml_config.tags:
                 result.append(agent_name)
         
@@ -126,7 +126,7 @@ class AgentRegistry:
                         agent_name = getattr(obj, "__agent_name__", name)
                         
                         # ✅ enabled 체크
-                        yaml_config = AgentConfigLoader.get_agent_config(agent_name)
+                        yaml_config = AgentConfigLoader.get_agent_config_from_current(agent_name)
                         
                         if yaml_config and not yaml_config.enabled:
                             logger.warning(

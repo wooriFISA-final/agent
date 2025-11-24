@@ -25,14 +25,13 @@ class AppState:
     """애플리케이션 상태를 관리하는 클래스
     
     Attributes:
-        graphs: 여러 그래프를 관리하는 딕셔너리 (graph_name -> CompiledGraph)
-        checkpointer: 메모리 체크포인터
-        session_manager: 세션 관리자
+        graphs: 여러 그래프를 관리하는 딕셔너리
+                {graph_name: {"graph": CompiledGraph, "checkpointer": MemorySaver, "config_loader": AgentConfigLoader}}
+        session_manager: 세션 관리자 (더 이상 사용하지 않을 수 있음)
         mcp_manager: MCP 관리자
     """
     def __init__(self):
-        self.graphs: dict = {}  # 여러 그래프 지원
-        self.checkpointer: Optional[MemorySaver] = None
+        self.graphs: dict = {}  # {name: {"graph": ..., "checkpointer": ..., "config_loader": ...}}
         self.session_manager: Optional[SessionManager] = None
         self.mcp_manager: Optional[MCPManager] = None
     
@@ -45,16 +44,53 @@ class AppState:
         Returns:
             해당 이름의 그래프, 없으면 None
         """
-        return self.graphs.get(graph_name)
+        graph_data = self.graphs.get(graph_name)
+        if graph_data:
+            return graph_data.get("graph")
+        return None
     
-    def add_graph(self, name: str, graph):
+    def get_graph_checkpointer(self, graph_name: str):
+        """그래프별 checkpointer 가져오기
+        
+        Args:
+            graph_name: 그래프 이름
+            
+        Returns:
+            해당 그래프의 checkpointer, 없으면 None
+        """
+        graph_data = self.graphs.get(graph_name)
+        if graph_data:
+            return graph_data.get("checkpointer")
+        return None
+    
+    def get_graph_config_loader(self, graph_name: str):
+        """그래프별 config_loader 가져오기
+        
+        Args:
+            graph_name: 그래프 이름
+            
+        Returns:
+            해당 그래프의 config_loader, 없으면 None
+        """
+        graph_data = self.graphs.get(graph_name)
+        if graph_data:
+            return graph_data.get("config_loader")
+        return None
+    
+    def add_graph(self, name: str, graph, checkpointer=None, config_loader=None):
         """그래프 추가
         
         Args:
             name: 그래프 이름
             graph: 컴파일된 그래프 인스턴스
+            checkpointer: 그래프 전용 checkpointer (선택)
+            config_loader: 그래프 전용 config_loader (선택)
         """
-        self.graphs[name] = graph
+        self.graphs[name] = {
+            "graph": graph,
+            "checkpointer": checkpointer,
+            "config_loader": config_loader
+        }
         logger.info(f"✅ Graph '{name}' added to AppState")
     
     def list_graphs(self):
@@ -94,13 +130,14 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("⚠️ AWS_BEARER_TOKEN_BEDROCK not configured in settings")
 
-    # 1. Initialize Checkpointer
-    app.state.checkpointer = MemorySaver()
-    logger.info("✅ Global MemorySaver initialized")
+    # 1. Global checkpointer removed - each graph will have its own
+    # (Keeping this comment for reference)
+    logger.info("✅ Skipping global MemorySaver (using graph-specific instances)")
 
-    # 2. Initialize SessionManager
-    app.state.session_manager = SessionManager(app.state.checkpointer)
-    logger.info("✅ SessionManager initialized")
+    # 2. Initialize SessionManager (deprecated - each graph has its own checkpointer now)
+    # Keeping for backward compatibility if needed
+    app.state.session_manager = None
+    logger.info("✅ SessionManager skipped (using graph-specific checkpointers)")
 
     # 3. Initialize and connect to MCP
     app.state.mcp_manager = MCPManager()
@@ -146,11 +183,15 @@ async def lifespan(app: FastAPI):
     for graph_name, config in graph_configs.items():
         logger.info(f"🔧 Building '{graph_name}' graph...")
         
+        # Create graph-specific MemorySaver
+        graph_checkpointer = MemorySaver()
+        logger.info(f"✅ Created independent MemorySaver for '{graph_name}' graph")
+        
         # Load agent configuration for this graph
         try:
             logger.info(f"📋 Loading agents from '{config['agents_yaml']}'...")
-            AgentConfigLoader(yaml_path=config['agents_yaml'])
-            enabled_agents = AgentConfigLoader.get_enabled_agents()
+            config_loader = AgentConfigLoader(yaml_path=config['agents_yaml'])
+            enabled_agents = config_loader.get_enabled_agents()
             logger.info(f"✅ Loaded {len(enabled_agents)} enabled agents for '{graph_name}'")
         except FileNotFoundError:
             logger.warning(f"⚠️ Agent config file not found: {config['agents_yaml']}")
@@ -160,15 +201,21 @@ async def lifespan(app: FastAPI):
             logger.error(f"❌ Error loading agent config for '{graph_name}': {e}")
             continue
         
-        # Build graph with loaded agent configuration
+        # Build graph with loaded agent configuration and graph-specific checkpointer
         try:
             graph = mk_graph(
                 yaml_path=str(config['graph_yaml']),
-                checkpointer=app.state.checkpointer
+                checkpointer=graph_checkpointer,
+                config_loader=config_loader
             )
             if graph:
-                app.state.add_graph(graph_name, graph)
-                logger.info(f"✅ '{graph_name}' graph built successfully!")
+                app.state.add_graph(
+                    name=graph_name,
+                    graph=graph,
+                    checkpointer=graph_checkpointer,
+                    config_loader=config_loader
+                )
+                logger.info(f"✅ '{graph_name}' graph built successfully with independent memory!")
             else:
                 logger.warning(f"⚠️ Failed to build '{graph_name}' graph from '{config['graph_yaml']}'")
         except FileNotFoundError:
