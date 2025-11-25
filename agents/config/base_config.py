@@ -2,17 +2,37 @@
 Agent State & Config Management Module
 Agent의 설정(Config)과 실행 상태(State)를 명확히 분리하여 관리
 """
-from typing import Any, Dict, List, Optional, TypedDict, Annotated
+from typing import Any, Dict, List, Optional, TypedDict, Annotated,Literal
 from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
 from langchain_core.messages import BaseMessage
-from langgraph.graph import add_messages  # ✅ 핵심 추가!
+from langgraph.graph import add_messages
 
 
 # ============================================================================
 # 1. 설정 (Config) - Agent의 불변 설정 정보
 # ============================================================================
+
+class LLMConfig(BaseModel):
+    """
+    Agent별 LLM 설정
+    
+    - 설정하지 않은 값은 전역 설정(settings)에서 가져옴
+    - Agent별로 다른 모델/온도 등을 사용 가능
+    """
+    model: Optional[str] = Field(None, description="LLM 모델명 (None이면 전역 설정 사용)")
+    temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="LLM Temperature")
+    top_p : Optional[float] = Field(None, ge=0.0, le=1.0, description="LLM Top-p sampling")
+    top_k : Optional[int] = Field(None, ge=0, description="LLM Top-k sampling")
+    num_ctx : Optional[int] = Field(None, ge=1, description="LLM Context length")
+    base_url: Optional[str] = Field(None, description="Ollama 서버 URL")
+    timeout: Optional[int] = Field(None, ge=1, description="요청 타임아웃(초)")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """None이 아닌 값만 딕셔너리로 변환"""
+        return {k: v for k, v in self.dict().items() if v is not None}
+
 
 class BaseAgentConfig(BaseModel):
     """
@@ -30,7 +50,7 @@ class BaseAgentConfig(BaseModel):
     # 실행 제어
     max_retries: int = Field(default=1, ge=0, description="실행 실패 시 재시도 횟수")
     timeout: int = Field(default=1000, gt=0, description="실행 타임아웃(초)")
-    max_iterations: int = Field(default=1000000, ge=1, description="멀티턴 최대 반복 횟수")
+    max_iterations: int = Field(default=10, ge=1, description="멀티턴 최대 반복 횟수")
     
     # Agent 관리
     enabled: bool = Field(default=True, description="Agent 활성화 여부")
@@ -40,13 +60,25 @@ class BaseAgentConfig(BaseModel):
     tags: List[str] = Field(default_factory=list, description="Agent 분류 태그")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="추가 메타데이터")
     
-    # llm 관리
-    model_name: str = Field(default="qwen3:8b", description="사용할 LLM 모델명")
-    # temperature: 0.7 = Field(default=0.7, ge=0.0, le=1.0, description="LLM Teperature 설정")
-    # top_p: float = Field(default=0.9, ge=0.0, le=1.0, description="LLM Top-p 설정")
-    # top_k: int = Field(default=40, ge=1, description="LLM Top-k 설정")
-    # penalty: float = Field(default=1.0, description="LLM Penalty 설정")
+    # LLM 설정 (Agent별 커스터마이징 가능)
+    llm_config: Optional[LLMConfig] = Field(None, description="Agent별 LLM 설정 (None이면 전역 설정 사용)")
     
+    # LLMConfig 클래스에 추가
+    stream: Optional[bool] = Field(None, description="스트리밍 응답 여부")
+    format: Optional[Literal["", "json"]] = Field(None, description='응답 포맷')
+    
+    def get_llm_config_dict(self) -> Dict[str, Any]:
+        """
+        Agent의 LLM 설정을 딕셔너리로 반환
+        
+        Returns:
+            None이 아닌 LLM 설정값들
+        """
+        if self.llm_config:
+            return self.llm_config.to_dict()
+        return {}
+
+
 # ============================================================================
 # 2. 실행 상태 (State) - Agent의 동적 실행 정보
 # ============================================================================
@@ -62,49 +94,52 @@ class ExecutionStatus(str, Enum):
     MAX_ITERATIONS = "max_iterations"  # 최대 반복 도달
 
 
+# AgentState 클래스에 global_messages 추가
+
 class AgentState(TypedDict, total=False):
     """
     Agent 실행 상태 스키마 (LangGraph 호환)
     
-    - TypedDict 기반으로 LangGraph State와 직접 호환
-    - 실행 중 동적으로 변경되는 정보
-    
-    ⚠️ 핵심 변경:
-    messages 필드에 Annotated[List[BaseMessage], add_messages] 사용
-    → LangGraph가 자동으로 메시지를 누적(append)함
+    메시지 관리:
+    - global_messages: 전체 대화 기록 (모든 에이전트가 공유, LLM 호출 시 사용)
+    - messages: 현재 에이전트의 작업 메시지 (deprecated, 하위호환용)
     """
-    # === 메시지 처리 (Reducer 적용!) ===
-    messages: Annotated[List[BaseMessage], add_messages]  # ✅ 핵심 수정!
+    # === 메시지 처리 ===
+    global_messages: Annotated[List[BaseMessage], add_messages]  # ✅ 전체 대화 기록
+    messages: Annotated[List[BaseMessage], add_messages]  # 하위호환용 (기존 코드)
     
     # === 실행 메타데이터 ===
-    session_id: str                          # 세션 ID
-    timestamp: datetime                      # 마지막 업데이트 시각
-    current_agent: str                       # 현재 실행 중인 Agent
-    execution_path: List[str]                # Agent 실행 경로
+    session_id: str
+    timestamp: datetime
+    current_agent: str
+    execution_path: List[str]
     
     # === 실행 제어 ===
-    status: ExecutionStatus                  # 현재 실행 상태
-    iteration: int                           # 현재 반복 횟수
-    max_iterations: int                      # 최대 반복 횟수
+    status: ExecutionStatus
+    iteration: int
+    max_iterations: int
     
     # === 데이터 ===
-    input: Dict[str, Any]                    # 입력 데이터
-    output: Dict[str, Any]                   # 출력 데이터
-    last_result: Any                         # 마지막 실행 결과
-    intermediate_results: Dict[str, Any]     # 중간 결과
+    input: Dict[str, Any]
+    output: Dict[str, Any]
+    last_result: Any
+    intermediate_results: Dict[str, Any]
     
     # === Tool 실행 추적 ===
-    tool_calls: List[Dict[str, Any]]         # Tool 호출 이력
-    tool_results: List[Dict[str, Any]]       # Tool 실행 결과
+    tool_calls: List[Dict[str, Any]]
+    tool_results: List[Dict[str, Any]]
     
     # === 에러 처리 ===
-    errors: List[Dict[str, Any]]             # 발생한 에러 목록
-    warnings: List[str]                      # 경고 메시지
+    errors: List[Dict[str, Any]]
+    warnings: List[str]
     
     # === 메타 정보 ===
-    metadata: Dict[str, Any]                 # 추가 메타데이터
+    metadata: Dict[str, Any]
 
-
+    # === Agent 위임 (DELEGATE) ===  
+    next_agent: str
+    delegation_reason: str
+    previous_agent: str  # ✅ 추가: 이전 에이전트 추적용
 # ============================================================================
 # 3. State 빌더 - 상태 생성 및 관리 헬퍼
 # ============================================================================
@@ -116,28 +151,18 @@ class StateBuilder:
     def create_initial_state(
         messages: List[BaseMessage],
         session_id: Optional[str] = None,
-        max_iterations: int = 1000000,
+        max_iterations: int = 10,
         **kwargs
     ) -> AgentState:
-        """
-        초기 상태 생성
-        
-        Args:
-            messages: 초기 메시지 리스트
-            session_id: 세션 ID (없으면 자동 생성)
-            max_iterations: 최대 반복 횟수
-            **kwargs: 추가 상태 필드
-            
-        Returns:
-            초기화된 상태
-        """
         from uuid import uuid4
         
         state = AgentState(
             messages=messages,
+            global_messages=messages.copy(),  # ✅ 초기 메시지로 global_messages 초기화
             session_id=session_id or str(uuid4()),
             timestamp=datetime.now(),
             current_agent="",
+            previous_agent="",  # ✅ 추가
             execution_path=[],
             status=ExecutionStatus.PENDING,
             iteration=0,
@@ -153,7 +178,6 @@ class StateBuilder:
             metadata={}
         )
         
-        # 추가 필드 업데이트
         state.update(kwargs)
         return state
     
@@ -326,7 +350,7 @@ class StateValidator:
             (검증 성공 여부, 에러 메시지)
         """
         # 반복 횟수 체크
-        if state.get("iteration", 0) > state.get("max_iterations", 1000000):
+        if state.get("iteration", 0) > state.get("max_iterations", 10):
             return False, "Iteration count exceeds max_iterations"
         
         # 상태 값 체크

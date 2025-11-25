@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-*
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Logs
+logs/
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Test
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Temporary folders (제외할 폴더)
+plan_agents/
+report/
+tests/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Build artifacts
+*.egg
+*.whl
+
+# Cache
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json

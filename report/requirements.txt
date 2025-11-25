@@ -1,0 +1,35 @@
+# ==========================================================
+# 통합 에이전트 프로젝트 필수 라이브러리 (LangGraph 기반)
+# ==========================================================
+
+# 1. 그래프 오케스트레이션 및 상태 관리
+# LangGraph: 에이전트 워크플로우를 정의하고 실행하는 핵심 프레임워크
+langgraph
+# pydantic: TypedDict를 사용하는 상태(AgentState) 관리에 필요 (LangGraph 내부 사용)
+pydantic
+
+# 2. 데이터 처리 및 분석 (Tool Nodes 및 Consume Agent)
+# pandas: 데이터프레임 처리 (Consume, Profit 에이전트에서 광범위하게 사용)
+pandas
+# scikit-learn: KNN 모델, StandardScaler 등 (Consume 에이전트에서 pickle로 로드)
+# 명시적인 사용은 없지만 모델 파일 로드를 위해 필요할 수 있습니다.
+scikit-learn
+# typing: TypedDict 등 타입 힌트를 위해 사용
+typing
+
+# 3. LLM 및 통신 (LLM Nodes 및 MCP Nodes)
+# requests: HTTP 통신 (Ollama 호출, MCP 서버 통신)
+requests
+# ollama: 파이썬 Ollama 클라이언트 (profit 에이전트에서 사용)
+# 기존 코드에서 requests와 ollama 클라이언트가 혼용되어 사용되었습니다.
+ollama
+# langchain-core: LangChain의 기본 메시지 객체 (compare 에이전트에서 SystemMessage 등 사용)
+# Ollama LLM을 LangChain 형식으로 초기화하는 부분이 있었다면 필요합니다.
+langchain-core
+
+# 4. 기타
+# matplotlib, seaborn: 시각화 함수가 포함되어 있으므로 추가
+matplotlib
+seaborn
+pymupdf  # pdf를 읽어오기 위함
+pyhwp  # 한글 파일을 읽어오기 위함
