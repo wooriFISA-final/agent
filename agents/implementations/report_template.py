@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any, List
-from langchain_core.messages import HumanMessage
+# from langchain_core.messages import HumanMessage
 # agents.base.agent_base의 AgentBase와 BaseAgentConfig가 있다고 가정
 from agents.base.agent_base import AgentBase, BaseAgentConfig
 # agents.registry.agent_registry의 AgentRegistry와 AgentState가 있다고 가정

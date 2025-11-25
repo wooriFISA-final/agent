@@ -1,45 +1,18 @@
-entry_point: user_check_agent
+entry_point: report_main_builder
+
 nodes:
-  # 1. 사용자 데이터 생성 담당
-  - name: user_create_agent
-    agent: user_create_agent
-    config:
-      max_iterations: 10
-      timeout: 300 # 5분
-      
-  # 2. 사용자 데이터 조회 담당 (Graph 진입점)
-  - name: user_check_agent
-    agent: user_check_agent
-    config:
-      max_iterations: 5
-      timeout: 200 # 3분 20초
-      
-  # 3. 통합 보고서 작성 (5가지 툴 호출)
+  # 통합 보고서 작성 노드
   - name: report_main_builder
-    agent: report_main_agent
+    # 🚨 [변경됨]: agent: report_main_agent -> report_agent
+    agent: report_agent 
     config:
       max_iterations: 20
       timeout: 480 # 8분
       
 edges:
-  # 데이터 상태에 따른 분기 (DynamicRouter)
-  - from: user_check_agent
-    router: DynamicRouter
-    paths:
-      REPORT_READY: report_main_builder    # 데이터 확인 성공 시
-      MISSING_DATA: user_create_agent      # 사용자 데이터 부족 시
-      ERROR: __end__                       # 조회 오류 발생 시
-
-  # 데이터 생성 성공/실패에 따른 분기 (DynamicRouter)
-  - from: user_create_agent
-    router: DynamicRouter
-    paths:
-      DATA_CREATED: user_check_agent       # 생성 성공 시 -> 데이터 재확인
-      FAIL: __end__                        # 생성 실패 시
-
   # 최종 완료 (DynamicRouter)
   - from: report_main_builder
     router: DynamicRouter
     paths:
-      REPORT_COMPLETE: __end__             # 모든 작업 완료 시
-      TOOL_FAIL: __end__                   # 툴 오류 발생 시
+      REPORT_COMPLETE: __end__
+      TOOL_FAIL: __end__
