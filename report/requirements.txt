@@ -1,0 +1,31 @@
+# ==========================================================
+# 최종 통합 에이전트 프로젝트 필수 라이브러리 (RAG/FastAPI/LangGraph)
+# ==========================================================
+
+# --- 1. 그래프 오케스트레이션 및 상태 관리 ---
+langgraph
+pydantic
+python-dotenv
+
+# --- 2. 데이터 처리 및 분석 (Agent Core) ---
+pandas
+numpy                          # RAG/FAISS의 행렬 연산을 위해 필요
+scikit-learn                   # Consume Agent의 모델 로드에 필요
+typing
+
+# --- 3. LLM 및 통신 (FastAPI, MCP) ---
+fastapi                        # FastAPI 서버
+uvicorn                        # FastAPI ASGI 서버
+requests                       # HTTP 통신 (Ollama, MCP)
+ollama                         # Ollama 파이썬 클라이언트
+langchain-core                 # LangChain 메시지 형식 지원
+sqlalchemy                     # DB 연결 및 ORM 지원
+pymysql                        # MySQL 드라이버 (sqlalchemy 백엔드)
+
+# --- 4. RAG 및 PDF/HWP 처리 ---
+faiss-cpu                      # 🚨 [RAG] 고속 벡터 검색 엔진
+sentence-transformers          # 🚨 [RAG] 임베딩 벡터 생성
+pymupdf                        # 🚨 PDF 텍스트 추출 (fitz 모듈)
+pyhwp                          # 🚨 한글 파일(.hwp) 텍스트 추출
+matplotlib                     # 시각화 지원
+seaborn                        # 시각화 지원

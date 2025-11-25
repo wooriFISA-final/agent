@@ -1,0 +1,28 @@
+# filename: report_agents_config.yaml
+
+agents:
+  report_main_agent:
+    name: "report_main_agent"
+    description: "소비, 투자, 정책 및 사용자 프로필 변동 데이터를 통합 분석하여 고객 맞춤형 월간 재무 보고서를 생성하는 Agent"
+    enabled: true
+
+    # 실행 제어 설정 (분석 작업이 길 수 있으므로 충분한 시간을 부여)
+    max_retries: 2
+    timeout: 300  # 5분 (LLM 호출 및 여러 툴 실행 시간 고려)
+    max_iterations: 15 # 최대 15번의 Tool 호출/생각을 반복
+
+    # Agent 분류 태그
+    tags:
+      - report
+      - analysis
+      - financial_data
+    
+    # LLM 설정 (일관되고 정량적인 분석 답변을 위해 낮은 Temperature 적용)
+    llm_config:
+      # 🚨 [주의]: 이 모델은 고객님의 환경에 맞춰 "qwen3:8b"와 같은 모델로 변경해야 합니다.
+      model: "qwen3:8b"
+      temperature: 0.1  # 매우 일관적/분석적 답변 유도 (권장)
+      top_p: 0.7        # 확실한 토큰 기반으로 답변 생성
+      top_k: 20         # 다양한 옵션 중 선택 폭 유지
+      stream: false     # 구조화된 최종 답변 생성을 위해 스트리밍 비활성화 (권장)
+      format: ""        # 최종 보고서는 자유로운 텍스트 포맷 (JSON 강제 불필요)
