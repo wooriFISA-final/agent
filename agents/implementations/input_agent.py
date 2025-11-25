@@ -1,12 +1,12 @@
 import logging
+import asyncio
 from typing import List, Any
 
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
-from agents.base.agent_base import AgentBase, AgentDecision, AgentAction
+from agents.base.agent_base import AgentBase
 from agents.config.base_config import BaseAgentConfig
 from agents.registry.agent_registry import AgentRegistry
-from core.llm.llm_manager import LLMManager
 
 logger = logging.getLogger("agent_system")
 
@@ -24,19 +24,18 @@ class PlanInputAgent(AgentBase):
     """
 
     def __init__(self, config: BaseAgentConfig):
+        # AgentBase가 LLM 설정/llm_config까지 이미 처리해줌
         super().__init__(config)
-
-        # AgentBase의 _analyze_request / _make_decision / _generate_final_response 에서
-        # 사용될 LLM 객체 설정 (ainvoke 지원)
-        self.llm = LLMManager.get_llm(
-            provider=getattr(config, "provider", "ollama"),
-            model=config.model_name,
-        )
 
         # 이 Agent는 MCP Tool을 사용하지 않음
         self.allowed_tools: list[str] = []
 
     async def run(self, state: dict) -> dict:
+        """
+        PlanInputAgent는 ReAct 루프를 쓰지 않고,
+        단일 턴으로 "질문 1개 or 최종 요약"만 생성하는 간단한 로직을 사용한다.
+        """
+
         # 1) 입력 검증
         if not self.validate_input(state):
             logger.error(f"[{self.name}] Invalid input state")
@@ -44,25 +43,31 @@ class PlanInputAgent(AgentBase):
                 "final_response",
                 "죄송합니다. 입력을 이해하지 못했습니다. 다시 한 번만 말씀해 주시겠어요?",
             )
-            # ✅ 여기서도 AIMessage 하나 넣어주는 게 안전
             messages = state.get("messages", [])
             messages.append(AIMessage(content=state["final_response"], name=self.name))
             state["messages"] = messages
+            return state
 
         messages: List[Any] = state.get("messages", [])
 
-        # 2) LLM에 넘길 메시지 구성 (System + history)
+        # 2) LLM에 보낼 메시지 구성 (System + history)
         system_prompt = self.get_agent_role_prompt()
-        llm_messages = [SystemMessage(content=system_prompt), *messages]
+        llm_messages: List[Any] = [SystemMessage(content=system_prompt), *messages]
 
         logger.info(
             f"[{self.name}] Generating PlanInputAgent response with {len(messages)} history messages"
         )
+        logger.debug(f"[{self.name}] LLM input messages: {llm_messages}")
 
-        # 3) LLM 호출
+        # 3) LLM 호출 (AgentBase._call_llm 사용 → 내부에서 LLMHelper.invoke_with_history 호출)
         try:
-            response = await self.llm.ainvoke(llm_messages)
-            text = getattr(response, "content", str(response))
+            # _call_llm 은 sync 함수라, async 컨텍스트에서 to_thread로 돌려줌
+            text = await asyncio.to_thread(
+                self._call_llm,
+                llm_messages,  # messages
+                False,         # stream=False
+                ""             # format="" (자유 텍스트)
+            )
         except Exception as e:
             logger.exception(f"[{self.name}] LLM 호출 실패: {e}")
             text = "죄송합니다. 잠시 후 다시 시도해 주시겠어요?"
@@ -70,22 +75,28 @@ class PlanInputAgent(AgentBase):
         # 4) 최종 응답을 state에 저장
         state["final_response"] = text
 
-        # ✅ 핵심: messages 리스트에 AIMessage 추가
+        # messages 리스트에 AIMessage 추가
         messages.append(AIMessage(content=text, name=self.name))
         state["messages"] = messages
-        
+
+        # (선택) global_messages에도 반영해두면 나중에 다른 Agent가 이어받기 편함
+        global_messages = state.get("global_messages", [])
+        if not global_messages:
+            global_messages = []
+        global_messages.extend([AIMessage(content=text, name=self.name)])
+        state["global_messages"] = global_messages
+
+        # 5) 입력 완료 여부 판단
         is_complete = False
-            
-        # 프롬프트 규칙 6번에 따라, 요약 문단은 "정리해 보면"으로 시작합니다.
-        # 이 키워드를 사용하여 완료 상태를 판단합니다.
-        # 소문자/대문자, 공백 등 오류를 줄이기 위해 strip() 및 lower()를 사용하는 것이 좋습니다.
+
+        # 프롬프트 규칙 6번:
+        # 요약 문단은 "정리해 보면"으로 시작 → 입력이 다 모였다고 판단
         if text.strip().startswith("정리해 보면"):
             is_complete = True
-                
-            # 5) LangGraph 라우팅을 위한 완료 신호를 state에 저장
-        state["is_input_complete"] = is_complete 
-            
+
+        state["is_input_complete"] = is_complete
         logger.info(f"[{self.name}] is_input_complete set to: {is_complete}")
+
         return state
 
     # =============================
@@ -134,52 +145,13 @@ class PlanInputAgent(AgentBase):
 
 [대화 규칙]
 
-1. **이미 나온 정보는 다시 묻지 마세요.**
-   - 예: 사용자가 "서울 마포구에 살고 싶어요"라고 말하면 hope_location은 채워진 것으로 간주합니다.
-   - 이전 메시지들을 읽고, 어떤 정보가 나왔는지 최대한 기억하려고 노력하세요.
-
-2. **한 번에 하나의 질문만 하세요.**
-   - 질문은 **딱 한 문장**으로만 작성합니다.
-   - 예: "현재 보유 중인 자산은 어느 정도인가요?" (OK)
-   - 예: "현재 보유 중인 자산은 얼마이고, 직업은 무엇인가요?" (X, 두 질문)
-
-3. **질문은 최대한 구체적이되, 부담스럽지 않게 묻습니다.**
-   - "가능하시다면 대략적인 금액만 말씀해 주셔도 괜찮습니다."처럼 부담을 줄이는 표현을 사용해도 좋습니다.
-
-4. **사용자의 답변을 그대로 존중하세요.**
-   - 사용자가 "3억 정도요"라고 말하면, 내부적으로는 "3억 정도"라는 텍스트가 저장된다고 가정합니다.
-   - 금액/비율을 엄밀히 숫자로 변환하는 작업은 이후 ValidationAgent와 MCP Tool이 처리합니다.
-
-5. **아직 5개 정보가 모두 채워지지 않았다고 판단되면:**
-   - 다음에 물어볼 **질문 한 문장**만 출력하세요.
-   - 인사말이나 불필요한 장문 설명은 피하고, 바로 다음 질문으로 이어가도 됩니다.
-   - 예:
-     - "좋습니다. 이번에는 현재 보유 중인 자산 규모를 대략 얼마 정도로 보고 계신지 알려주실 수 있을까요?"
-
-6. **5개 정보가 모두 채워진 것 같다고 판단되면:**
-   - 더 이상 새로운 질문을 던지기보다는,
-     지금까지 사용자가 말한 내용을 한 번에 정리해서 알려주는
-     **자연스러운 한국어 요약 문단**을 출력합니다.
-   - 이때, 다음과 같은 내용을 포함할 수 있습니다.
-     - 현재 자산, 희망 위치, 희망 주택 가격, 주택 유형, 소득 대비 투자 비율 요약
-     - "이 정보를 바탕으로 다음 단계에서 대출 가능 금액과 부족 자금을 계산해 보겠습니다." 같은 안내 문장
-   - 예:
-     - "정리해 보면, 현재 자산은 약 3억 원 정도 보유하고 계시고, 서울 마포구의 아파트를 약 7억 원 정도로 고려 중이시군요. 월 소득 중에서는 약 30% 정도를 주택 관련 저축·투자에 활용하실 계획이라고 이해했습니다. 이 정보를 바탕으로 다음 단계에서 대출 가능 금액과 부족 자금을 계산해 드릴게요."
-
-7. **출력 형식**
-   - 최종 출력은 **순수 텍스트 또는 간단한 마크다운**만 사용합니다.
-   - JSON, 코드블록, 키-값 형식 데이터 구조를 직접 사용자에게 보여주지 마세요.
-   - 즉, 아래와 같은 형식은 사용하지 않습니다.
-     - `{"next_question": "...", "is_complete": true}` (X)
-     - ```json ... ``` (X)
-
----
-
-[요약]
-
-- 당신의 목표는:
-  - 사용자의 말을 기반으로 5가지 핵심 정보를 최대한 자연스럽게 끌어내고,
-  - 아직 부족한 정보가 있으면 그 부분만 콕 집어서 한 문장으로 질문하며,
-  - 모든 정보가 모였다고 판단되면, 지금까지의 내용을 정리해서 사용자에게 다시 설명해 주는 것입니다.
-- 최종 답변은 언제나 **사람이 읽기 좋은 한국어 문장**으로만 구성되어야 합니다.
+1. 이미 나온 정보는 다시 묻지 마세요.
+2. 한 번에 하나의 질문만 하세요.
+3. 질문은 구체적이되 부담스럽지 않게.
+4. 사용자의 답변을 그대로 존중하세요.
+5. 5개 정보가 모두 채워지지 않았다면,
+   → 다음에 물어볼 질문 한 문장만 출력하세요.
+6. 5개 정보가 모두 채워졌다고 판단되면,
+   → "정리해 보면," 으로 시작하는 자연스러운 한국어 요약 문단을 출력하세요.
+7. 최종 출력은 사람 눈으로 읽기 좋은 한국어 문장만 사용하세요.
 """

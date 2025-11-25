@@ -29,6 +29,13 @@ class AgentSystemConfig(BaseSettings):
     # Logging
     LOG_LEVEL: str = Field(..., description="Logging level")
     LOG_FILE: Optional[str] = Field(None, description="Log 파일 경로")
+    
+    # Langgraph 실행 관련
+    MAX_GRAPH_ITERATIONS: int = Field(
+        20,  # 기본값은 원하는 값으로 조정
+        ge=1,
+        description="LangGraph 전체 최대 반복 횟수 (chat.py에서 사용)",
+    )
 
     # MCP (Mission Control Protocol)
     MCP_URL: HttpUrl = Field(..., description="URL for the MCP server")

@@ -2,18 +2,9 @@ import logging
 from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage
+
 from agents.base.agent_base import AgentBase, BaseAgentConfig, AgentState
 from agents.registry.agent_registry import AgentRegistry
-from core.llm.llm_manager import LLMManager  # ⚠️ 프로젝트 구조에 맞춘 import
-try:
-    from mcp.server.api.resources.db_tools import (
-        api_get_user_profile_for_fund,
-        api_get_ml_ranked_funds,
-        api_add_my_product
-    )
-except ImportError:
-    # 경로가 다를 경우를 대비해 예외 처리 (로그만 남김)
-    logging.warning("db_tools import failed. Ensure the path is correct.")
 
 # log 설정
 logger = logging.getLogger("agent_system")
@@ -39,35 +30,21 @@ class FundAgent(AgentBase):
     
     # Agent의 초기화
     def __init__(self, config: BaseAgentConfig):
+        # ⚠️ AgentBase.__init__ 먼저 호출 (mcp, max_iterations, llm_config 등 세팅)
         super().__init__(config)
-
-        # LLMManager를 통해 LLM 객체 생성
-        self.llm = LLMManager.get_llm(
-            provider=getattr(config, "provider", "ollama"),
-            model=config.model_name,
-        )
-
-        tools = []
-        if api_get_user_profile_for_fund: tools.append(api_get_user_profile_for_fund)
-        if api_get_ml_ranked_funds: tools.append(api_get_ml_ranked_funds)
-        if api_add_my_product: tools.append(api_add_my_product)
-
-        # LLM에 도구 연결 (Bind)
-        if tools and hasattr(self.llm, "bind_tools"):
-            self.llm = self.llm.bind_tools(tools)
 
         # 이 Agent가 사용할 MCP Tool 이름 목록
         # (실제 HTTP 경로/스펙 매핑은 MCP 프레임워크에서 처리한다고 가정)
         self.allowed_tools = [
-            "get_user_profile_for_fund", # 사용자 성향 조회
-            "get_ml_ranked_funds",       # ML 랭킹 기반 추천 조회
-            "add_my_product",            # 가입 처리
+            "get_user_profile_for_fund",  # 사용자 성향 조회
+            "get_ml_ranked_funds",        # ML 랭킹 기반 추천 조회
+            "add_my_product",             # 가입 처리
         ]
 
     # =============================
     # 전처리: 입력 데이터 검증
     # =============================
-    def validate_input(self, state: Dict[str, Any]) -> bool:
+    def validate_input(self, state: AgentState) -> bool:
         """
         FundAgent 실행 전 입력 검증.
 

@@ -2,9 +2,9 @@ import logging
 from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage
+
 from agents.base.agent_base import AgentBase, BaseAgentConfig, AgentState
 from agents.registry.agent_registry import AgentRegistry
-from core.llm.llm_manager import LLMManager  # ⚠️ 프로젝트 경로에 맞춤
 
 # log 설정
 logger = logging.getLogger("agent_system")
@@ -29,13 +29,8 @@ class SummaryAgent(AgentBase):
 
     # Agent 초기화
     def __init__(self, config: BaseAgentConfig):
+        # ⚠️ AgentBase.__init__ 먼저 호출 (mcp, max_iterations, llm_config 등 세팅)
         super().__init__(config)
-
-        # LLMManager를 통해 LLM 객체 생성
-        self.llm = LLMManager.get_llm(
-            provider=getattr(config, "provider", "ollama"),
-            model=config.model_name,
-        )
 
         # 이 Agent가 사용할 MCP Tool 이름 목록
         # (실제 HTTP 경로/스펙 매핑은 MCP 프레임워크에서 처리된다고 가정)

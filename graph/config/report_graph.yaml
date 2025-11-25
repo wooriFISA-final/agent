@@ -1,46 +1,18 @@
-# ============================================
-# Report Graph Configuration
-# ============================================
-# 리포트 생성 관련 그래프
+entry_point: report_main_builder
 
-# ============================================
-# Agent 노드 정의
-# ============================================
 nodes:
-  - name: user_create_agent
-    agent: user_create_agent
+  # 통합 보고서 작성 노드
+  - name: report_main_builder
+    # 🚨 [변경됨]: agent: report_main_agent -> report_agent
+    agent: report_agent
     config:
-      max_iterations: 10
-      timeout: 300
+      max_iterations: 20
+      timeout: 480 # 8분
       
-  - name: user_check_agent
-    agent: user_check_agent
-    config:
-      max_iterations: 5
-      timeout: 200
-
-# ============================================
-# Edge 정의
-# ============================================
 edges:
-  # Direct edges
-  direct: []
-  
-  # Conditional edges (DynamicRouter 사용)
-  conditional:
-    - from: user_create_agent
-      router: DynamicRouter
-      paths:
-        user_check: user_check_agent
-        END: __end__
-    
-    - from: user_check_agent
-      router: DynamicRouter
-      paths:
-        user_creation: user_create_agent
-        END: __end__
-
-# ============================================
-# Graph 설정
-# ============================================
-entry_point: user_create_agent
+  # 최종 완료 (DynamicRouter)
+  - from: report_main_builder
+    router: DynamicRouter
+    paths:
+      REPORT_COMPLETE: __end__
+      TOOL_FAIL: __end__

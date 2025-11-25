@@ -2,9 +2,10 @@ import logging
 from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage
-from agents.base.agent_base import AgentBase, BaseAgentConfig, AgentState
+
+from agents.base.agent_base import AgentBase
+from agents.config.base_config import BaseAgentConfig, AgentState
 from agents.registry.agent_registry import AgentRegistry
-from core.llm.llm_manager import LLMManager  # ✅ 템플릿 경로에 맞춤
 
 # log 설정
 logger = logging.getLogger("agent_system")
@@ -18,12 +19,14 @@ class ValidationAgent(AgentBase):
     역할:
     - PlanInputAgent 또는 사용자 대화로부터 전달된 주택 자금 계획 정보를 검증
     - MCP 도구를 사용해:
+      0) 입력 완료 여부 판단 (/input/check_plan_completion)
       1) 입력값 검증·정규화 (/input/validate_input_data)
       2) 지역·주택유형 평균 시세 조회 (/db/get_market_price)
       3) 검증된 값 DB 저장 (/db/upsert_member_and_plan)
     - 시세 대비 너무 무리한 계획이면 경고 메시지를 생성하고, 다시 입력을 요청
 
     MCP 도구(allowed_tools):
+    - check_plan_completion : /input/check_plan_completion
     - validate_input_data    : /input/validate_input_data
     - get_market_price       : /db/get_market_price
     - upsert_member_and_plan : /db/upsert_member_and_plan
@@ -31,17 +34,13 @@ class ValidationAgent(AgentBase):
 
     # Agent의 초기화
     def __init__(self, config: BaseAgentConfig):
+        # AgentBase가 LLM 설정/llm_config까지 이미 처리
         super().__init__(config)
-
-        # LLMManager를 통해 LLM 객체 생성 (논리적 설명/경고 문구용)
-        self.llm = LLMManager.get_llm(
-            provider=getattr(config, "provider", "ollama"),
-            model=config.model_name,
-        )
 
         # 이 Agent가 사용할 MCP Tool 이름 목록
         # (실제 tool 스펙/엔드포인트 매핑은 MCP 프레임워크 쪽에서 처리된다고 가정)
         self.allowed_tools = [
+            "check_plan_completion",
             "validate_input_data",
             "get_market_price",
             "upsert_member_and_plan",
@@ -93,6 +92,7 @@ class ValidationAgent(AgentBase):
 
         ⚠️ 중요:
         - 이 프롬프트만으로 LLM이
+          0) 입력 완료 여부를 어떤 Tool로 어떻게 확인할지
           1) 어떤 정보를 어떻게 검증해야 하는지
           2) 어떤 순서로 MCP Tool을 사용할지(논리적으로)
           3) 최종적으로 사용자에게 어떤 식으로 결과를 설명해야 하는지
@@ -130,6 +130,25 @@ class ValidationAgent(AgentBase):
 당신은 다음 MCP Tool들을 사용할 수 있습니다.
 (도구 호출 자체는 시스템이 처리하며, 당신은 "어떤 도구를 어떤 인자로 사용할지"만 논리적으로 결정합니다.
 도구 이름이나 경로는 **사용자에게 직접 언급하지 마세요.**)
+
+0) check_plan_completion
+   - 역할:
+     - 대화 메시지 히스토리(messages)를 기반으로
+       PlanInput 단계의 입력이 완료되었는지 여부를 판단합니다.
+   - 입력(예시):
+     - messages: [
+         {"role": "user", "content": "..."},
+         {"role": "assistant", "content": "..."},
+         ...
+       ]
+   - 출력(예시):
+     - success: true/false
+     - is_complete: true/false
+     - missing_fields: []
+     - summary_text: "정리해 보면, ..." 또는 None
+   - 기본 규칙:
+     - 마지막 assistant/ai 메시지가 "정리해 보면"으로 시작하면
+       is_complete = true 로 간주할 수 있습니다.
 
 1) validate_input_data
    - 역할:
@@ -178,7 +197,18 @@ class ValidationAgent(AgentBase):
 
 [검증 로직(개념 가이드)]
 
-1. 먼저 validate_input_data 도구를 사용해
+0. 먼저 check_plan_completion 도구를 사용해
+   대화 메시지 기반으로 입력이 완료되었는지(is_complete)를 확인합니다.
+   - is_complete가 false인 경우:
+     - 아직 PlanInput 단계에서 더 질문/답변이 필요하다고 판단합니다.
+     - 이때는 구체적인 숫자 검증·DB 저장보다는,
+       "어떤 정보가 더 필요하다"는 안내 메시지를 중심으로 답변합니다.
+     - 필요하다면 missing_fields 정보를 참고해
+       "초기 자산", "희망 지역", "희망 가격", "주택 유형", "월 소득 중 사용 비율" 중
+       무엇이 더 필요한지 구체적으로 언급할 수 있습니다.
+
+1. is_complete가 true이거나, 충분히 정보가 모였다고 판단되면
+   validate_input_data 도구를 사용해
    raw 입력값을 검증하고 정규화합니다.
    - status가 "incomplete"이면 missing_fields를 기준으로
      어떤 정보가 부족한지 판단합니다.
@@ -207,12 +237,28 @@ class ValidationAgent(AgentBase):
 [출력 형식(사용자용 요약)]
 
 당신의 최종 출력은 **항상 자연스러운 한국어 문장들로 이루어진 요약 메시지**여야 합니다.  
-JSON, 딕셔너리, 코드블록, 백틱(````), 마크다운, 키 이름("status", "normalized_data" 등)을
+JSON, 딕셔너리, 코드블록, 백틱(```), 마크다운, 키 이름("status", "normalized_data" 등)을
 직접 노출하지 마세요.
 
-다음 두 가지 대표 상황을 기준으로 작성합니다.
+다음 대표 상황들을 기준으로 작성합니다.
 
-1) 검증 및 DB 저장까지 정상 완료된 경우 (성공 케이스 예시)
+1) 입력이 아직 완전하지 않은 경우 (PlanInput 단계 보완 유도)
+
+예시:
+
+"지금까지 입력해 주신 내용을 기준으로 보면,
+주택 자금 계획을 세우기 위해 몇 가지 정보가 더 필요합니다.
+
+- 초기 보유 자금
+- 희망 주택 위치
+- 희망 주택 가격
+- 주택 유형
+- 월 소득 중 주택 자금에 사용할 비율
+
+위 항목들 중에서 아직 말씀해 주지 않은 부분이 있다면
+조금 더 구체적으로 알려 주시면, 그 정보를 바탕으로 다시 검증을 도와드리겠습니다."
+
+2) 검증 및 DB 저장까지 정상 완료된 경우 (성공 케이스 예시)
 
 예시:
 
@@ -228,7 +274,7 @@ JSON, 딕셔너리, 코드블록, 백틱(````), 마크다운, 키 이름("status
 검증된 내용은 시스템(DB)에 안전하게 저장해 두었으며,
 이 정보를 바탕으로 다음 단계인 대출 한도 및 상환 계획 설계를 진행할 수 있습니다."
 
-2) 정보가 부족하거나, 시세 대비 너무 무리한 계획인 경우 (재입력/보완 유도 예시)
+3) 정보가 부족하거나, 시세 대비 너무 무리한 계획인 경우 (재입력/보완 유도 예시)
 
 예시:
 
@@ -247,7 +293,7 @@ JSON, 딕셔너리, 코드블록, 백틱(````), 마크다운, 키 이름("status
 
 [제약 사항]
 
-- 어떤 경우에도 JSON, 딕셔너리, 코드블록, 백틱(````),
+- 어떤 경우에도 JSON, 딕셔너리, 코드블록, 백틱(```),
   키 이름("status", "normalized_data" 등)을 직접 출력하지 마세요.
 - 항상 자연스러운 한국어 문단으로만 답변하세요.
 - 검증이 성공하고 DB 저장이 완료된 경우에는

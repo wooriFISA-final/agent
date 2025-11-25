@@ -2,9 +2,10 @@ import logging
 from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage
-from agents.base.agent_base import AgentBase, BaseAgentConfig, AgentState
+
+from agents.base.agent_base import AgentBase
+from agents.config.base_config import BaseAgentConfig, AgentState
 from agents.registry.agent_registry import AgentRegistry
-from core.llm.llm_manager import LLMManager  # ⚠️ 프로젝트 구조에 맞춘 import
 
 # log 설정
 logger = logging.getLogger("agent_system")
@@ -18,7 +19,7 @@ class SavingAgent(AgentBase):
     역할:
     - DB 및 FAISS 기반 MCP Tool들을 활용해,
       사용자에게 적합한 예금 3개와 적금 3개를 추천
-    - 각 상품에 대해 초보자용 요약 및 추천 이유를 포함한 JSON을 생성
+    - 각 상품에 대해 초보자용 요약 및 추천 이유를 포함한 설명을 생성
 
     MCP 도구(allowed_tools):
     - get_user_profile_for_fund     : /db/get_user_profile_for_fund
@@ -31,15 +32,8 @@ class SavingAgent(AgentBase):
 
     # Agent의 초기화
     def __init__(self, config: BaseAgentConfig):
-        # ⚠️ AgentBase.__init__ 먼저 호출 (mcp, max_iterations 등 세팅)
+        # ⚠️ AgentBase.__init__ 먼저 호출 (mcp, max_iterations, llm_config 등 세팅)
         super().__init__(config)
-
-        # LLMManager를 통해 LLM 객체 생성
-        # AgentBase._analyze_request / _make_decision / _generate_final_response 에서 self.llm 사용
-        self.llm = LLMManager.get_llm(
-            provider=getattr(config, "provider", "ollama"),
-            model=config.model_name,
-        )
 
         # 이 Agent가 사용할 MCP Tool 이름 목록
         # (실제 HTTP 경로 매핑은 MCP 프레임워크/호스트 레이어에서 처리한다고 가정)

@@ -1,116 +1,163 @@
 # ========================================
-# Config 필드별 설명
-# ========================================
-#
-# 기본 정보
-#   name: "user_create_agent"
-#     - Agent 고유 이름 (중복 불가)
-#     - 코드에서 agent = registry.create_agent("user_create_agent")로 사용
-#
-#   description: "사용자 생성 Agent"
-#     - Agent 역할을 한 줄로 설명
-#
-#   enabled: true|false
-#     - true: 사용 가능 (기본값)
-#     - false: 비활성화 (코드 변경 없이 끄기 가능)
-#
-# 실행 제어
-#   max_retries: 2
-#     - 실패 시 재시도 횟수
-#     - 권장값: 1-3
-#
-#   timeout: 180
-#     - 최대 실행 시간 (초)
-#     - 권장값: 180 (3분)
-#
-#   max_iterations: 10
-#     - ReAct 루프 최대 반복 횟수 (Tool 호출 최대 횟수)
-#     - 권장값: 10-20
-#
-# 분류
-#   tags: ["plan", "query", ...]
-#     - Agent 분류 태그
-#     - 코드에서 필터링할 때 사용
-#     - 자유롭게 정의 가능
-#
-# LLM 설정 (최종 답변 생성에만 영향)
-#   model: "qwen3:8b"
-#     - LLM 모델 이름
-#
-#   temperature: 0.1 ~ 0.9
-#     - 창의성/확률성 조정
-#     - 0.1: 매우 일관적 (분석/의사결정)
-#     - 0.3-0.5: 균형 (일반 사용)
-#     - 0.8-0.9: 매우 창의적 (아이디어)
-#
-#   top_p: 0.7 ~ 0.95
-#     - 0.1 : 매우 확실한 것만
-#     - 0.7: 확실한 것만
-#     - 0.95: 다양한 답변
-#
-#   top_k: 5 ~ 25
-#     - Top-k sampling (상위 k개만)
-#     - 5: 가장 확실한 것
-#     - 20: 다양한 옵션
-#
-#   num_ctx: 4096 ~ 40960 (건드리지 마세요!)
-#     - Context length (최대 토큰)
-#     - 기본값: 40960
-#
-#   stream: true|false
-#     - 스트리밍 응답 여부
-#     - true: 빠른 응답 (구조화된 답변 불가)
-#     - false: 전체 응답 (권장)
-#
-#   format: "" | "json"
-#     - 응답 포맷
-#     - "": 자유로운 텍스트
-#     - "json": JSON 강제
+# Plan / Loan / Saving / Fund / Summary Agents 설정
 # ========================================
 
 agents:
-  user_create_agent:
-    name: "user_create_agent"
-    description: "사용자의 정보를 받아 사용자 DB를 생성하는 Agent"
-    enabled: true    # 활성화 (사용 가능)
-    # enabled: false   # 비활성화 (로드는 하지만 사용 안함) 
-    
+  # --------------------------------------
+  # 1) 사용자 주택 플랜 입력용 Agent
+  #    @AgentRegistry.register("plan_input_agent")
+  # --------------------------------------
+  plan_input_agent:
+    name: "plan_input_agent"
+    description: "사용자의 주택 자금/주택 플랜 정보를 대화형으로 수집하고 구조화하는 Agent"
+    enabled: true
+
     max_retries: 3
-    timeout: 180
-    max_iterations: 100
-    
+    timeout: 300          # 입력 대화형이라 넉넉하게
+    max_iterations: 15    # 질문-응답 반복 여유 있게
+
     tags:
       - plan
-      # - report # 비활성화된 태그 예시
+      - input
 
     llm_config:
       model: "qwen3:8b"
-      temperature: 0.1
-      top_p: 0.1
-      top_k: 10
+      temperature: 0.3     # 질문/리액션이 조금 더 자연스럽게
+      top_p: 0.7
+      top_k: 20
       num_ctx: 40960
       stream: false
-      format: ""
-    
-  user_check_agent:
-    name: "user_check_agent"
-    description: "사용자의 정보를 받아 DB에서 사용자 정보를 조회하는 Agent"
+      format: ""           # 자유 텍스트(내부에서 JSON 필요하면 프롬프트로 강제)
+
+  # --------------------------------------
+  # 2) 입력 검증 / 정규화 Agent
+  #    @AgentRegistry.register("validation_agent")
+  # --------------------------------------
+  validation_agent:
+    name: "validation_agent"
+    description: "사용자 입력 데이터를 검증·정규화하고, 금액/지역명을 파싱·보정하는 Agent"
     enabled: true
-    
+
     max_retries: 3
     timeout: 180
-    max_iterations: 100
-    
+    max_iterations: 10
+
     tags:
       - plan
-      # - report
-    
+      - validation
+
     llm_config:
       model: "qwen3:8b"
-      temperature: 0.1        
-      top_p: 0.1
+      temperature: 0.1     # 최대한 일관되게
+      top_p: 0.3
+      top_k: 10
+      num_ctx: 40960
+      stream: false
+      format: "json"       # 검증 결과를 JSON으로 강제하고 싶으면 사용 (아니면 ""로 둬도 됨)
+
+  # --------------------------------------
+  # 3) 대출 한도/추천 Agent
+  #    파일: loan_agent_node.py
+  #    @AgentRegistry.register("loan_agent")
+  # --------------------------------------
+  loan_agent:
+    name: "loan_agent"
+    description: "사용자 소득·자산·주택 정보로 DSR/LTV를 계산하고 대출 한도 및 상품을 추천하는 Agent"
+    enabled: true
+
+    max_retries: 3
+    timeout: 240
+    max_iterations: 12
+
+    tags:
+      - plan
+      - loan
+
+    llm_config:
+      model: "qwen3:8b"
+      temperature: 0.15    # 계산/설명 모두 안정적으로
+      top_p: 0.4
       top_k: 10
       num_ctx: 40960
       stream: false
       format: ""
-    
+
+  # --------------------------------------
+  # 4) 예·적금 추천 및 입력 Agent
+  #    @AgentRegistry.register("saving_agent")
+  # --------------------------------------
+  saving_agent:
+    name: "saving_agent"
+    description: "부족 자금/목표 기간 등을 바탕으로 예·적금 상품을 추천하고 사용자의 선호를 추가로 입력받는 Agent"
+    enabled: true
+
+    max_retries: 3
+    timeout: 240
+    max_iterations: 15     # 상품 조합·질문 왕복 여유
+
+    tags:
+      - plan
+      - saving
+      - input
+
+    llm_config:
+      model: "qwen3:8b"
+      temperature: 0.3
+      top_p: 0.7
+      top_k: 20
+      num_ctx: 40960
+      stream: false
+      format: ""
+
+  # --------------------------------------
+  # 5) 펀드 추천 및 입력 Agent
+  #    @AgentRegistry.register("fund_agent")
+  # --------------------------------------
+  fund_agent:
+    name: "fund_agent"
+    description: "투자 성향과 부족 자금, 목표 기간에 맞는 펀드 상품을 추천하고 사용자의 투자 선호를 입력받는 Agent"
+    enabled: true
+
+    max_retries: 3
+    timeout: 240
+    max_iterations: 15
+
+    tags:
+      - plan
+      - fund
+      - input
+
+    llm_config:
+      model: "qwen3:8b"
+      temperature: 0.35    # 설명+제안이 자연스럽게
+      top_p: 0.8
+      top_k: 20
+      num_ctx: 40960
+      stream: false
+      format: ""
+
+  # --------------------------------------
+  # 6) 최종 자산관리 요약 리포트 Agent
+  #    @AgentRegistry.register("summary_agent")
+  # --------------------------------------
+  summary_agent:
+    name: "summary_agent"
+    description: "Plan/Loan/Saving/Fund 결과를 종합하여 우리은행 프리미엄 자산관리 리포트를 작성하는 Agent"
+    enabled: true
+
+    max_retries: 3
+    timeout: 300          # 리포트 작성이라 넉넉하게
+    max_iterations: 12
+
+    tags:
+      - plan
+      - report
+
+    llm_config:
+      model: "qwen3:8b"
+      temperature: 0.25    # 너무 들뜨지 않게, 그래도 말투는 부드럽게
+      top_p: 0.7
+      top_k: 20
+      num_ctx: 40960
+      stream: false
+      format: ""
