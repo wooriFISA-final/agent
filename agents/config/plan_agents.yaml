@@ -1,8 +1,34 @@
 # ========================================
-# Plan / Loan / Saving / Fund / Summary Agents 설정
+# Plan / Supervisor / Loan / Saving / Fund / Summary Agents 설정
 # ========================================
 
 agents:
+  # --------------------------------------
+  # 0) 플로우 조율용 Supervisor Agent
+  #    @AgentRegistry.register("supervisor_agent")
+  # --------------------------------------
+  supervisor_agent:
+    name: "supervisor_agent"
+    description: "input/loan/saving/fund/summary 에이전트를 조율하여 주택 자금/자산관리 전체 플로우를 관리하는 상위 Supervisor Agent"
+    enabled: true
+
+    max_retries: 3
+    timeout: 300
+    max_iterations: 10
+
+    tags:
+      - plan
+      - supervisor
+
+    llm_config:
+      model: "qwen3:8b"
+      temperature: 0.2     # 의사결정이므로 안정적으로
+      top_p: 0.5
+      top_k: 10
+      num_ctx: 40960
+      stream: false
+      format: ""           # 내부 DELEGATE/결정용이므로 자유 텍스트
+
   # --------------------------------------
   # 1) 사용자 주택 플랜 입력용 Agent
   #    @AgentRegistry.register("plan_input_agent")

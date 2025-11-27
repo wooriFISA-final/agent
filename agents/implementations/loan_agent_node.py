@@ -121,7 +121,7 @@ class LoanAgent(AgentBase):
      }
    - 출력 예시(user_loan_info):
      {
-       "user_name": "홍길동",
+       "name": "홍길동",
        "salary": 48000000,          // 연 소득
        "income_usage_ratio": 30,    // 소득 중 주택자금 사용 비율 (%)
        "initial_prop": 300000000,   // 초기 자산

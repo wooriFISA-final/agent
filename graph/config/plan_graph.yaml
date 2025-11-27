@@ -1,23 +1,30 @@
 # ============================================
 # Plan Graph Configuration
 # ============================================
-# 재무 계획 관련 그래프 (주택 플랜 → 검증 → 대출 → 예적금 → 펀드 → 요약 리포트)
+# 재무 계획 관련 그래프
+# - supervisor_agent가 전체 플로우를 조율
+# - 입력(input) → 검증(validation) → (loan / saving / fund / summary) 단계 진행
 # ============================================
 
 # ============================================
 # Agent 노드 정의
 # ============================================
 nodes:
+  # 0) Supervisor Agent
+  - name: supervisor_agent
+    agent: supervisor_agent
+    config:
+      max_iterations: 10
+      timeout: 300
+
   # 1) 사용자 주택 플랜 입력 Agent
-  #    @AgentRegistry.register("plan_input_agent")
   - name: input_agent
     agent: plan_input_agent
     config:
-      max_iterations: 15    # 대화형 입력이라 조금 여유 있게
+      max_iterations: 15
       timeout: 300
 
   # 2) 입력 검증 / 정규화 Agent
-  #    @AgentRegistry.register("validation_agent")
   - name: validation_agent
     agent: validation_agent
     config:
@@ -25,8 +32,6 @@ nodes:
       timeout: 240
 
   # 3) 대출 한도/추천 Agent
-  #    파일: loan_agent_node.py
-  #    @AgentRegistry.register("loan_agent")
   - name: loan_agent
     agent: loan_agent
     config:
@@ -34,7 +39,6 @@ nodes:
       timeout: 240
 
   # 4) 예·적금 추천 + 추가 입력 Agent
-  #    @AgentRegistry.register("saving_agent")
   - name: saving_agent
     agent: saving_agent
     config:
@@ -42,7 +46,6 @@ nodes:
       timeout: 240
 
   # 5) 펀드 추천 + 추가 입력 Agent
-  #    @AgentRegistry.register("fund_agent")
   - name: fund_agent
     agent: fund_agent
     config:
@@ -50,7 +53,6 @@ nodes:
       timeout: 240
 
   # 6) 최종 요약 리포트 Agent
-  #    @AgentRegistry.register("summary_agent")
   - name: summary_agent
     agent: summary_agent
     config:
@@ -61,72 +63,50 @@ nodes:
 # Edge 정의
 # ============================================
 edges:
-  # Direct edges (필요하면 사용, 여기선 DynamicRouter 위주로 사용)
-  direct: []
-
-  # Conditional edges (DynamicRouter 사용)
-  conditional:
-    # ----------------------------------------
-    # 1) input_agent → (validation / 재입력 / 종료)
-    # ----------------------------------------
+  # ------------------------------------------------
+  # Direct edges (단순 고정 흐름) - from / to 형식
+  # ------------------------------------------------
+  direct:
+    # input_agent → validation_agent
     - from: input_agent
-      router: DynamicRouter
-      paths:
-        validation: validation_agent   # 입력이 어느 정도 채워졌으면 검증 단계로
-        re_input: input_agent          # 입력이 너무 부족하면 다시 input_agent
-        END: __end__                   # 사용자가 중간 종료를 원하는 경우
+      to: validation_agent
 
-    # ----------------------------------------
-    # 2) validation_agent → (loan / re_input / 종료)
-    # ----------------------------------------
+    # validation_agent → supervisor_agent (단방향)
     - from: validation_agent
-      router: DynamicRouter
-      paths:
-        loan: loan_agent               # 검증 통과 → 대출 계산/추천 단계
-        re_input: input_agent          # 검증 실패 → 다시 입력 받기
-        END: __end__
+      to: supervisor_agent
 
-    # ----------------------------------------
-    # 3) loan_agent → (saving / summary / 종료)
-    # ----------------------------------------
+    # loan / saving / fund → supervisor_agent
     - from: loan_agent
-      router: DynamicRouter
-      paths:
-        saving: saving_agent           # 부족 자금 있으면 예·적금 단계로
-        summary: summary_agent         # 대출만으로 플랜이 완성되면 바로 요약
-        END: __end__
+      to: supervisor_agent
 
-    # ----------------------------------------
-    # 4) saving_agent → (fund / summary / 종료)
-    # ----------------------------------------
     - from: saving_agent
-      router: DynamicRouter
-      paths:
-        fund: fund_agent               # 사용자가 펀드까지 원하면 펀드 추천 단계로
-        summary: summary_agent         # 예·적금까지만 구성해도 되면 요약으로
-        END: __end__
+      to: supervisor_agent
 
-    # ----------------------------------------
-    # 5) fund_agent → (summary / 종료)
-    # ----------------------------------------
     - from: fund_agent
-      router: DynamicRouter
-      paths:
-        summary: summary_agent         # 펀드까지 추천 후 최종 리포트
-        END: __end__
+      to: supervisor_agent
 
-    # ----------------------------------------
-    # 6) summary_agent → 종료
-    #    (원하면 여기서 다시 input으로 돌리는 것도 가능)
-    # ----------------------------------------
-    - from: summary_agent
+    # ❌ 여기서는 summary_agent → __end__ 직접 연결 안 함
+    #    finish_points에서 summary_agent를 지정하면
+    #    GraphBuilder가 summary_agent → END edge를 자동 추가해 줌
+
+  # ------------------------------------------------
+  # Conditional edges (DynamicRouter 사용)
+  # ------------------------------------------------
+  conditional:
+    - from: supervisor_agent
       router: DynamicRouter
       paths:
+        input_agent: input_agent
+        loan_agent: loan_agent
+        saving_agent: saving_agent
+        fund_agent: fund_agent
+        summary_agent: summary_agent
         END: __end__
-        # re_plan: input_agent         # “플랜 다시 짜기” 같은 기능 넣고 싶으면 사용
 
 # ============================================
 # Graph 설정
 # ============================================
-# 엔트리 포인트는 "사용자 입력을 받는" input_agent에서 시작
-entry_point: input_agent
+entry_point: supervisor_agent
+
+finish_points:
+  - summary_agent
