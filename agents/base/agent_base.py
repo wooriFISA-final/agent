@@ -14,9 +14,7 @@ from agents.config.base_config import (
     ExecutionStatus
 )
 
-from agents.base.agent_base_prompts import DECISION_PROMPT, FINAL_PROMPT
-
-# ✅ LangGraph 호환을 위해 LangChain 메시지는 유지
+from agents.base.agent_base_prompts import DECISION_PROMPT
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 
 from core.mcp.mcp_manager import MCPManager
@@ -46,7 +44,8 @@ class AgentDecision:
         tool_name: Optional[str] = None,
         tool_arguments: Optional[Dict] = None,
         tool_use_id: Optional[str] = None,  # ⭐ Bedrock toolUseId
-        next_agent: Optional[str] = None
+        next_agent: Optional[str] = None,
+        response_text: Optional[str] = None  # ⭐ end_turn 시 LLM 응답
     ):
         self.action = action
         self.reasoning = reasoning
@@ -54,6 +53,7 @@ class AgentDecision:
         self.tool_arguments = tool_arguments or {}
         self.tool_use_id = tool_use_id  # ⭐ 추가
         self.next_agent = next_agent
+        self.response_text = response_text  # ⭐ 추가
 
 
 class AgentBase(ABC):
@@ -102,7 +102,7 @@ class AgentBase(ABC):
             # agents.yaml 설정이 없으면 BaseAgentConfig 사용
             self.max_iterations = config.max_iterations
             self.llm_config = config.get_llm_config_dict()
-            logger.warning(f"[{self.name}] ⚠️  No agents.yaml config found, using BaseAgentConfig defaults")
+            logger.info(f"[{self.name}] Using BaseAgentConfig defaults")
         
         logger.info(f"[{self.name}] Agent initialized")
         logger.info(f"[{self.name}] LLM config: {self.llm_config if self.llm_config else 'Using global settings'}")
@@ -113,14 +113,14 @@ class AgentBase(ABC):
     # LLM 호출 헬퍼 메서드
     # =============================
     
-    def _langchain_to_dict(self, message) -> Dict[str, str]:
+    def _langchain_to_dict(self, message) -> Dict[str, Any]:
         """LangChain 메시지를 딕셔너리로 변환
         
         Args:
             message: LangChain 메시지 객체
             
         Returns:
-            Dict[str, str]: {"role": role, "content": content} 형태의 딕셔너리
+            Dict[str, Any]: {"role": role, "content": content, ...} 형태의 딕셔너리
         """
         if isinstance(message, HumanMessage):
             return {"role": "user", "content": message.content}
@@ -129,7 +129,11 @@ class AgentBase(ABC):
         elif isinstance(message, SystemMessage):
             return {"role": "system", "content": message.content}
         elif isinstance(message, ToolMessage):
-            return {"role": "tool", "content": message.content}
+            # ToolMessage는 tool_call_id도 함께 전달해야 함
+            result = {"role": "tool", "content": message.content}
+            if hasattr(message, 'tool_call_id') and message.tool_call_id:
+                result["tool_call_id"] = message.tool_call_id
+            return result
         else:
             return {"role": "user", "content": str(message)}
     
@@ -325,16 +329,7 @@ class AgentBase(ABC):
         # MCP 도구 목록 조회
         available_tools = await self._list_mcp_tools()
         logger.info(f"[{self.name}] MCP tools available: {len(available_tools)}")
-
-        if not available_tools:
-            error_msg = "No MCP tools available"
-            logger.error(f"[{self.name}] {error_msg}")
-            state = StateBuilder.add_warning(state, error_msg)
-            state = StateBuilder.finalize_state(state, ExecutionStatus.FAILED)
-            return state
-        
-        logger.info(f"[{self.name}] Available tools: {available_tools}")
-        
+                
         # Bedrock toolConfig로 변환
         bedrock_tool_config = self._convert_mcp_to_bedrock_toolspec(available_tools)
         if bedrock_tool_config:
@@ -379,7 +374,7 @@ class AgentBase(ABC):
                 return await self._execute_delegate_action(state, decision)
                 
             elif decision.action == AgentAction.RESPOND:
-                return await self._execute_respond_action(state, global_messages, available_tools)
+                return await self._execute_respond_action(state, global_messages, available_tools, decision)
         
         # 최대 반복 횟수 도달
         return await self._handle_max_iterations(state, global_messages)
@@ -498,7 +493,8 @@ class AgentBase(ABC):
         self,
         state: AgentState,
         global_messages: List,
-        available_tools: List[str]
+        available_tools: List[str],
+        decision: AgentDecision
     ) -> AgentState:
         """Respond 액션 처리
         
@@ -506,6 +502,7 @@ class AgentBase(ABC):
             state: 현재 상태
             global_messages: 전역 메시지 리스트
             available_tools: 사용 가능한 도구 목록
+            decision: Agent 의사결정 결과
             
         Returns:
             AgentState: 업데이트된 상태
@@ -513,7 +510,14 @@ class AgentBase(ABC):
         logger.info("✅ Generating final response")
         
         try:
-            final_response = await self._generate_final_response(state, global_messages, available_tools)
+            # end_turn으로 응답이 전달됨
+            final_response = decision.response_text
+            
+            if not final_response:
+                logger.error(f"[{self.name}] No response_text in decision")
+                raise ValueError("response_text is required for RESPOND action")
+            
+            logger.info(f"[{self.name}] Using response from end_turn (no additional LLM call)")
     
             state["last_result"] = final_response
             
@@ -571,12 +575,18 @@ class AgentBase(ABC):
         messages: List,
         available_tools: List[str],
     ) -> AgentDecision:
-        """Agent 의사결정 (Bedrock native tool calling 지원)
+        """Agent 의사결정 (Bedrock Native Tool Calling 전용)
         
-        Bedrock toolConfig를 전달하여 native tool calling 사용
-        - stopReason: "tool_use" 감지
-        - toolUseId 저장
-        - fallback: JSON 파싱 방식
+        toolChoice="auto"를 사용하여 LLM이 필요할 때만 Tool을 선택합니다.
+        JSON 파싱을 사용하지 않으므로 100% 안정적입니다.
+        
+        사용 가능한 Tool:
+        - MCP Tools: 실제 데이터 조회
+        - delegate_to_agent: 다른 에이전트에게 위임
+        
+        stopReason 처리:
+        - tool_use: Tool 실행
+        - end_turn: 최종 응답 생성
         
         Args:
             state: 현재 상태
@@ -598,7 +608,7 @@ class AgentBase(ABC):
         )
         
         try:
-            logger.info(f"[{self.name}] 🤔 Making decision")
+            logger.info(f"[{self.name}] 🤔 Making decision with Bedrock Native Tool Calling")
         
             messages.append(HumanMessage(content=system_prompt))
             state["global_messages"] = messages
@@ -606,144 +616,117 @@ class AgentBase(ABC):
             # State에서 bedrock_tool_config 가져오기
             bedrock_tool_config = state.get("bedrock_tool_config")
             
-            # LLM 호출 - toolConfig 전달, 전체 응답 받기
+            if not bedrock_tool_config:
+                raise Exception("bedrock_tool_config not found in state")
+            
+            # LLM 호출 - toolConfig 전달, toolChoice="auto"로 자동 선택
             formatted_messages = self._convert_messages_to_dict(messages)
             
             from core.llm.llm_manger import LLMHelper
             response = await asyncio.to_thread(
                 LLMHelper.invoke_with_history,
                 history=formatted_messages,
-                tool_config=bedrock_tool_config,  # toolConfig 전달
-                return_full_response=True,  # 전체 응답 받기
+                tool_config=bedrock_tool_config,
+                tool_choice={"auto": {}},  
+                return_full_response=True,
                 temperature=0.1,
                 top_p=0.1
             )
             
             # stopReason 확인
             stop_reason = response.get("stopReason")
+            logger.info(f"[{self.name}] stopReason: {stop_reason}")
             
-            if stop_reason == "tool_use":
-                # Bedrock이 tool 사용 요청
-                logger.info(f"[{self.name}] 🔧 Bedrock requested tool use")
+            # end_turn: 최종 응답 준비 완료
+            if stop_reason == "end_turn":
+                # 응답 텍스트 추출
+                message = response.get("output", {}).get("message", {})
+                content_blocks = message.get("content", [])
                 
-                message = response["output"]["message"]
-                content = message.get("content", [])
+                response_text = ""
+                for block in content_blocks:
+                    if "text" in block:
+                        response_text = block["text"]
+                        break
                 
-                # assistant 응답을 히스토리에 추가
-                messages.append(AIMessage(content=str(content)))
-                state["global_messages"] = messages
+                logger.info(f"[{self.name}] ✅ LLM ready to provide final response (end_turn)")
+                logger.info(f"[{self.name}] Response preview: {response_text[:100]}...")
                 
-                for block in content:
-                    if "toolUse" in block:
-                        tool_use = block["toolUse"]
+                return AgentDecision(
+                    action=AgentAction.RESPOND,
+                    reasoning="LLM decided to respond directly without using tools",
+                    response_text=response_text
+                )
+            
+            # tool_use가 아니면 에러
+            if stop_reason != "tool_use":
+                logger.error(f"[{self.name}] Unexpected stopReason: {stop_reason}")
+                raise Exception(f"Unexpected stopReason: '{stop_reason}'")
+            
+            # Tool 사용 정보 추출
+            message = response["output"]["message"]
+            content = message.get("content", [])
+
+            # reasoningContent 블록 필터링 (Extended Thinking 모델용)
+            # toolUse, text, image 등만 유지
+            filtered_content = [
+                block for block in content 
+                if not isinstance(block, dict) or "reasoningContent" not in block
+            ]
+            
+            # 필터링 후 content가 비어있으면 원본 사용
+            if not filtered_content:
+                filtered_content = content
+
+            # assistant 응답을 히스토리에 추가
+            # Bedrock native tool calling에서는 content를 그대로 유지해야 함
+            # _prepare_bedrock_messages에서 이를 적절히 변환함
+            messages.append(AIMessage(content=filtered_content))
+
+            state["global_messages"] = messages
+            
+            # toolUse 블록 찾기 (필터링된 content 사용)
+            for block in filtered_content:
+                if "toolUse" in block:
+                    tool_use = block["toolUse"]
+                    tool_name = tool_use["name"]
+                    tool_input = tool_use.get("input", {})
+                    tool_use_id = tool_use["toolUseId"]
+                    
+                    logger.info(f"[{self.name}] 🔧 Tool selected: {tool_name}")
+                    logger.info(f"[{self.name}] 📋 Tool input: {tool_input}")
+                    
+                    # delegate_to_agent Tool 감지
+                    if tool_name == "delegate_to_agent":
+                        agent_name = tool_input.get("agent_name")
+                        reason = tool_input.get("reason", "")
+                        
+                        logger.info(f"[{self.name}] 🔀 Delegating to: {agent_name}")
+                        
+                        return AgentDecision(
+                            action=AgentAction.DELEGATE,
+                            reasoning=reason,
+                            next_agent=agent_name
+                        )
+                    
+                    # finish_conversation Tool은 제거됨 (end_turn으로 대체)
+                    
+                    # 일반 MCP Tool
+                    else:
                         return AgentDecision(
                             action=AgentAction.USE_TOOL,
                             reasoning="Bedrock native tool calling",
-                            tool_name=tool_use["name"],
-                            tool_arguments=tool_use.get("input", {}),
-                            tool_use_id=tool_use["toolUseId"]  
+                            tool_name=tool_name,
+                            tool_arguments=tool_input,
+                            tool_use_id=tool_use_id
                         )
             
-            # 일반 응답 (JSON 파싱 방식 - fallback)
-            output_message = response.get("output", {}).get("message", {})
-            content_blocks = output_message.get("content", [])
-            
-            text_content = ""
-            for block in content_blocks:
-                if "text" in block:
-                    text_content = block["text"]
-                    break
-            
-            content = self._remove_think_tag(text_content)
-            logger.info(f"📋 Decision Response: {content}")
-            
-            # 의사결정 결과를 메시지 히스토리에 추가
-            messages.append(AIMessage(content=content))
-            state["global_messages"] = messages
-            
-            decision_json = json.loads(content)
-            
-            action_str = decision_json.get("action")
-            reasoning = decision_json.get("reasoning", "")
-            
-            if action_str == "use_tool":
-                return AgentDecision(
-                    action=AgentAction.USE_TOOL,
-                    reasoning=reasoning,
-                    tool_name=decision_json.get("tool_name"),
-                    tool_arguments=decision_json.get("tool_arguments", {})
-                )
-            elif action_str == "delegate":
-                return AgentDecision(
-                    action=AgentAction.DELEGATE,
-                    reasoning=reasoning,
-                    next_agent=decision_json.get("next_agent")
-                )
-            else:
-                return AgentDecision(
-                    action=AgentAction.RESPOND,
-                    reasoning=reasoning
-                )
+            # toolUse 블록을 찾지 못한 경우 (발생하지 않아야 함)
+            logger.error(f"[{self.name}] No toolUse block found in response")
+            raise Exception("No toolUse block found despite stopReason='tool_use'")
                 
         except Exception as e:
             logger.error(f"[{self.name}] Decision making failed: {e}")
-            raise
-    
-    async def _generate_final_response(
-        self,
-        state: AgentState,
-        messages: List,
-        tool_names: List[str]
-    ) -> str:
-        """최종 답변 생성 (Agent 설정 따름)
-        
-        Agent의 llm_config 사용
-        - 창의성 조정 가능
-        - 포맷 설정 가능
-        - Agent별로 다른 스타일 가능
-        
-        각 Agent에서 llm_config를 다르게 설정하면
-        이 메서드가 그에 따라 답변을 생성함
-        
-        Args:
-            state: 현재 상태
-            messages: LangChain 메시지 리스트
-            tool_names: 사용 가능한 도구 이름 목록
-            
-        Returns:
-            str: 최종 답변 텍스트
-            
-        Raises:
-            Exception: 답변 생성 실패 시
-        """
-        system_prompt = FINAL_PROMPT
-        
-        try:
-            logger.info(f"[{self.name}] 💬 Generating final response with Agent config")
-            logger.info(f"[{self.name}] Using Agent's LLM settings: {self.llm_config}")
-            
-            messages.append(HumanMessage(content=system_prompt))
-            
-            # global_messages 업데이트
-            state["global_messages"] = messages
-            
-            # Agent 설정을 따름 (_call_llm 사용)
-            response = await asyncio.to_thread(
-                self._call_llm,
-                messages,
-                None   # stream: Agent 설정 따름
-            )
-            
-            # 최종 답변 결과를 메시지 히스토리에 추가
-            messages.append(AIMessage(content=response))
-            
-            # global_messages 업데이트
-            state["global_messages"] = messages
-            
-            logger.info(f"[{self.name}] ✅ Final response generated")
-            return self._remove_think_tag(response)
-        except Exception as e:
-            logger.error(f"[{self.name}] Final response generation failed: {e}")
             raise
     
     async def _generate_fallback_response(self, messages: List) -> str:
@@ -817,6 +800,23 @@ class AgentBase(ABC):
 **주의:** 위 목록에 없는 Agent(특히 자기 자신인 {self.name})에게는 절대 위임할 수 없습니다.
 """
     
+    def _get_available_agents_list(self) -> List[str]:
+        """현재 Agent에서 위임 가능한 다른 Agent 목록을 리스트로 반환
+        
+        Bedrock toolSpec의 enum에 사용하기 위한 헬퍼 메서드
+        
+        Returns:
+            List[str]: 위임 가능한 Agent 이름 리스트
+        """
+        if hasattr(self, "allowed_agents"):
+            agents = [name for name in self.allowed_agents if name != self.name]
+        else:
+            from agents.registry.agent_registry import AgentRegistry
+            all_agents = AgentRegistry.list_agents()
+            agents = [name for name in all_agents if name != self.name]
+        
+        return agents
+    
     async def _list_mcp_tools(self) -> List[Dict[str, Any]]:
         """MCP 도구 목록 조회 및 필터링
         
@@ -872,7 +872,8 @@ class AgentBase(ABC):
         mcp_tools: List[Dict[str, Any]]
     ) -> Optional[Dict]:
         """
-        MCP tool spec을 Bedrock toolConfig 형식으로 변환
+        MCP tool spec을 Bedrock toolConfig 형식으로 변환하고,
+        delegate_to_agent와 finish_conversation Tool 추가
         
         MCP는 OpenAI function call 형식:
         {
@@ -907,33 +908,59 @@ class AgentBase(ABC):
             mcp_tools: _list_mcp_tools()에서 반환된 tool 목록
             
         Returns:
-            Bedrock toolConfig 딕셔너리, tool이 없으면 None
+            Bedrock toolConfig 딕셔너리
         """
-        if not mcp_tools:
-            return None
-        
         bedrock_tools = []
         
-        for tool in mcp_tools:
-            func = tool.get("function", {})
-            params = func.get("parameters", {})
-            
-            # description이 비어있으면 안 되므로 기본값 제공
-            description = func.get("description", "").strip()
-            if not description:
-                description = f"MCP tool: {func.get('name', 'unknown')}"
-            
+        # 1. MCP Tools 변환
+        if mcp_tools:
+            for tool in mcp_tools:
+                func = tool.get("function", {})
+                params = func.get("parameters", {})
+                
+                # description이 비어있으면 안 되므로 기본값 제공
+                description = func.get("description", "").strip()
+                if not description:
+                    description = f"MCP tool: {func.get('name', 'unknown')}"
+                
+                bedrock_tools.append({
+                    "toolSpec": {
+                        "name": func.get("name"),
+                        "description": description,
+                        "inputSchema": {
+                            "json": params
+                        }
+                    }
+                })
+        
+        # 2. delegate_to_agent Tool 추가
+        available_agents = self._get_available_agents_list()
+        if available_agents:
             bedrock_tools.append({
                 "toolSpec": {
-                    "name": func.get("name"),
-                    "description": description,  # 최소 1글자 보장
+                    "name": "delegate_to_agent",
+                    "description": "다른 에이전트에게 작업을 위임합니다. 현재 에이전트가 처리할 수 없거나 다른 에이전트의 전문성이 필요한 경우 사용합니다.",
                     "inputSchema": {
-                        "json": params  # MCP schema를 그대로 사용
+                        "json": {
+                            "type": "object",
+                            "properties": {
+                                "agent_name": {
+                                    "type": "string",
+                                    "description": f"위임할 에이전트 이름. 가능한 에이전트: {', '.join(available_agents)}",
+                                    "enum": available_agents
+                                },
+                                "reason": {
+                                    "type": "string",
+                                    "description": "위임 이유 및 전달할 컨텍스트"
+                                }
+                            },
+                            "required": ["agent_name", "reason"]
+                        }
                     }
                 }
             })
         
-        logger.info(f"[{self.name}] ✅ Converted {len(bedrock_tools)} MCP tools to Bedrock toolSpec")
+        logger.info(f"[{self.name}] ✅ Created Bedrock toolConfig: {len(bedrock_tools)} tools (MCP: {len(mcp_tools) if mcp_tools else 0}, delegate: {1 if available_agents else 0})")
         
         return {
             "tools": bedrock_tools

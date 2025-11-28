@@ -62,7 +62,7 @@ class LLMManager:
             "model_id": settings.BEDROCK_MODEL_ID,
             "temperature": settings.LLM_TEMPERATURE,
             "top_p": settings.LLM_TOP_P,
-            # "max_tokens": settings.LLM_MAX_TOKENS,
+            "max_tokens": settings.LLM_MAX_TOKENS,
             "stream": settings.LLM_STREAM,
             "timeout": settings.LLM_TIMEOUT
         }
@@ -108,7 +108,7 @@ class LLMManager:
                 timeout=10,
                 temperature=config["temperature"],
                 top_p=config["top_p"],
-                # max_tokens=config.get("max_tokens", 100)
+                max_tokens=config.get("max_tokens", 10000)
             )
             logger.info(f"Bedrock 연결 테스트 성공: region={config['region']}, model={config['model_id']}")
             return True
@@ -142,11 +142,31 @@ class LLMManager:
                 system_messages.append({"text": content})
                 
             elif role in ["user", "assistant"]:
-                # 일반 메시지
-                conversation_messages.append({
-                    "role": role,
-                    "content": [{"text": content}]
-                })
+                # content가 이미 Bedrock 형식의 리스트인지 확인
+                # (예: [{"toolUse": {...}}, {"text": "..."}])
+                if isinstance(content, list) and content and isinstance(content[0], dict):
+                    # reasoningContent 블록 필터링 (Extended Thinking 모델용)
+                    # toolUse, text, image 등만 유지
+                    filtered_content = [
+                        block for block in content 
+                        if not isinstance(block, dict) or "reasoningContent" not in block
+                    ]
+                    
+                    # 필터링 후 content가 비어있으면 빈 텍스트 블록 추가
+                    if not filtered_content:
+                        filtered_content = [{"text": ""}]
+                    
+                    # 이미 Bedrock 형식이면 필터링된 content 사용
+                    conversation_messages.append({
+                        "role": role,
+                        "content": filtered_content
+                    })
+                else:
+                    # 일반 텍스트 메시지
+                    conversation_messages.append({
+                        "role": role,
+                        "content": [{"text": str(content)}]
+                    })
                 
             elif role == "tool":
                 # ToolMessage 처리
@@ -162,18 +182,27 @@ class LLMManager:
                     # JSON이 아니면 텍스트로 처리
                     tool_content = [{"text": content}]
                 
-                # toolResult 블록으로 변환
-                conversation_messages.append({
-                    "role": "user",  # user 역할로 전송
-                    "content": [
-                        {
-                            "toolResult": {
-                                "toolUseId": tool_use_id,
-                                "content": tool_content
-                            }
-                        }
-                    ]
-                })
+                # toolResult 블록 생성
+                tool_result_block = {
+                    "toolResult": {
+                        "toolUseId": tool_use_id,
+                        "content": tool_content
+                    }
+                }
+                
+                # 이전 메시지가 toolResult를 포함하는 user 메시지인지 확인
+                if (conversation_messages and 
+                    conversation_messages[-1]["role"] == "user" and 
+                    "toolResult" in conversation_messages[-1]["content"][0]):
+                    
+                    # 기존 메시지에 추가
+                    conversation_messages[-1]["content"].append(tool_result_block)
+                else:
+                    # 새로운 user 메시지 생성
+                    conversation_messages.append({
+                        "role": "user",
+                        "content": [tool_result_block]
+                    })
         
         return system_messages, conversation_messages
     
@@ -216,6 +245,7 @@ class LLMManager:
         region: str,
         timeout: int = 180,
         tool_config: Optional[Dict] = None,
+        tool_choice: Optional[Union[str, Dict]] = None,
         **kwargs
     ) -> Dict:
         """
@@ -227,6 +257,7 @@ class LLMManager:
             region: AWS 리전
             timeout: 타임아웃 (초)
             tool_config: Bedrock toolConfig (선택)
+            tool_choice: Bedrock toolChoice (선택, 예: {"any": {}}, {"auto": {}}, {"tool": {"name": "tool_name"}})
             **kwargs: temperature, top_p, max_tokens 등
             
         Returns:
@@ -254,8 +285,8 @@ class LLMManager:
             inference_config["temperature"] = kwargs["temperature"]
         if "top_p" in kwargs:
             inference_config["topP"] = kwargs["top_p"]
-        # if "max_tokens" in kwargs:
-        #     inference_config["maxTokens"] = kwargs["max_tokens"]
+        if "max_tokens" in kwargs:
+            inference_config["maxTokens"] = kwargs["max_tokens"]
         
         # API 요청 파라미터
         request_params = {
@@ -269,7 +300,12 @@ class LLMManager:
         # toolConfig 추가
         if tool_config:
             request_params["toolConfig"] = tool_config
-            logger.debug(f"요청에 {len(tool_config.get('tools', []))}개의 도구를 포함합니다.")
+            logger.info(f"✅ toolConfig 추가: {len(tool_config.get('tools', []))}개의 도구")
+            
+            # toolChoice 추가 (toolConfig가 있을 때만)
+            if tool_choice:
+                request_params["toolConfig"]["toolChoice"] = tool_choice
+                logger.info(f"✅ toolChoice 추가: {tool_choice}")
         
         if inference_config:
             request_params["inferenceConfig"] = inference_config
@@ -281,6 +317,13 @@ class LLMManager:
             response = client.converse(**request_params)
             logger.info("Bedrock API 호출 성공")
             logger.debug(f"응답 키: {list(response.keys())}")
+            
+            # 토큰 사용량 로깅
+            usage = response.get("usage", {})
+            input_tokens = usage.get("inputTokens", 0)
+            output_tokens = usage.get("outputTokens", 0)
+            total_tokens = usage.get("totalTokens", 0)
+            logger.info(f"📊 Token Usage - Input: {input_tokens}, Output: {output_tokens}, Total: {total_tokens}")
             
             # 전체 응답 반환 (stopReason 포함)
             return response
@@ -335,7 +378,7 @@ class LLMHelper:
             timeout=config["timeout"],
             temperature=kwargs.get("temperature", config["temperature"]),
             top_p=kwargs.get("top_p", config["top_p"]),
-            # max_tokens=kwargs.get("max_tokens", config["max_tokens"])
+            max_tokens=kwargs.get("max_tokens", config["max_tokens"])
         )
         
         # 텍스트만 추출
@@ -353,6 +396,7 @@ class LLMHelper:
     def invoke_with_history(
         history: List[Dict[str, str]],
         tool_config: Optional[Dict] = None,
+        tool_choice: Optional[Union[str, Dict]] = None,
         return_full_response: bool = False,
         **kwargs
     ) -> Union[str, Dict]:
@@ -362,6 +406,7 @@ class LLMHelper:
         Args:
             history: 대화 히스토리 [{"role": "user/assistant/system", "content": "..."}]
             tool_config: Bedrock toolConfig (선택)
+            tool_choice: Bedrock toolChoice (선택, 예: {"any": {}}, {"auto": {}}, {"tool": {"name": "tool_name"}})
             return_full_response: True면 전체 응답, False면 텍스트만
             **kwargs: LLM 설정
             
@@ -376,9 +421,10 @@ class LLMHelper:
             region=config["region"],
             timeout=config["timeout"],
             tool_config=tool_config,
+            tool_choice=tool_choice,
             temperature=kwargs.get("temperature", config["temperature"]),
             top_p=kwargs.get("top_p", config["top_p"]),
-            # max_tokens=kwargs.get("max_tokens", config["max_tokens"])
+            max_tokens=kwargs.get("max_tokens", config["max_tokens"])
         )
         
         # return_full_response에 따라 처리

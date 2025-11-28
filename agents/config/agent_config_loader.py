@@ -124,7 +124,7 @@ class AgentConfigLoader:
         current = cls.get_current()
         if current:
             return current.get_agent_config(agent_name)
-        logger.warning(f"No current AgentConfigLoader context set. Cannot get config for {agent_name}")
+        # 컨텍스트가 없는 것은 정상 (agent discovery 단계)
         return None
 
     def get_enabled_agents(self) -> list[str]:

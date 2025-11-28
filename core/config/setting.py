@@ -43,7 +43,7 @@ class AgentSystemConfig(BaseSettings):
     # LLM Parameters (Bedrock 호환)
     LLM_TEMPERATURE: float = Field(..., ge=0.0, le=2.0, description="LLM temperature setting")
     LLM_TOP_P: float = Field(..., ge=0.0, le=1.0, description="LLM top-p sampling value")
-    # LLM_MAX_TOKENS: int = Field(default=1500, ge=1, description="최대 토큰 수 (maxTokens)")
+    LLM_MAX_TOKENS: int = Field(default=120000, ge=1, description="최대 토큰 수 (maxTokens)")
     LLM_TIMEOUT: int = Field(..., ge=1, description="LLM 요청 타임아웃 (초)")
     LLM_STREAM: bool = Field(default=False, description="스트리밍 응답 활성화 여부 (현재 미지원)")
     
