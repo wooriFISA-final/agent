@@ -97,6 +97,7 @@ edges:
       router: DynamicRouter
       paths:
         plan_input_agent: plan_input_agent
+        validation_agent: validation_agent
         loan_agent: loan_agent
         saving_agent: saving_agent
         fund_agent: fund_agent
