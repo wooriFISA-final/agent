@@ -22,9 +22,7 @@ agents:
     
     # LLM 설정
     llm_config:
-      model: "qwen3:8b"
+      model: "gpt-oss-20b"
       temperature: 0.1
       top_p: 0.7
-      top_k: 20
       stream: false
-      format: ""

@@ -120,9 +120,10 @@ AGENT_DEBUG=false
 AGENT_API_HOST=0.0.0.0
 AGENT_API_PORT=8080
 
-# LLM 설정
-AGENT_LLM_MODEL=qwen3:8b
-AGENT_LLM_API_BASE_URL=http://localhost:11434
+# LLM 설정 (AWS Bedrock)
+AGENT_AWS_REGION=us-east-1
+AGENT_AWS_BEARER_TOKEN_BEDROCK=your-token-here
+AGENT_BEDROCK_MODEL_ID=openai.gpt-oss-20b-1:0
 
 # MCP 서버
 AGENT_MCP_URL=http://localhost:3000

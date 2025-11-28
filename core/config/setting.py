@@ -42,18 +42,17 @@ class AgentSystemConfig(BaseSettings):
     MCP_CONNECTION_RETRIES: int = Field(..., description="MCP 연결 재시도 횟수")
     MCP_CONNECTION_TIMEOUT: int = Field(..., description="Timeout for MCP 연결 (초)")
 
-    # LLM Provider
-    LLM_PROVIDER: str = Field(..., description="LLM 제공자 이름(예: openai, ollama 등)") # 제거 예정
-    LLM_MODEL: str = Field(..., description="기본 LLM 모델 이름")
-    LLM_API_BASE_URL: Optional[HttpUrl] = Field(None, description="LLM API URL")
+    # AWS Bedrock Configuration
+    AWS_REGION: str = Field(..., description="AWS 리전 (예: us-east-1)")
+    AWS_BEARER_TOKEN_BEDROCK: Optional[str] = Field(None, description="AWS Bedrock 인증 토큰")
+    BEDROCK_MODEL_ID: str = Field(..., description="Bedrock 모델 ID (예: openai.gpt-oss-20b-1:0)")
+    
+    # LLM Parameters (Bedrock 호환)
     LLM_TEMPERATURE: float = Field(..., ge=0.0, le=2.0, description="LLM temperature setting")
+    LLM_TOP_P: float = Field(..., ge=0.0, le=1.0, description="LLM top-p sampling value")
+    LLM_MAX_TOKENS: int = Field(default=120000, ge=1, description="최대 토큰 수 (maxTokens)")
     LLM_TIMEOUT: int = Field(..., ge=1, description="LLM 요청 타임아웃 (초)")
-    LLM_TOP_P: float = Field(..., ge=0.0, le=1.0, description="LLM top-p sampling value.")
-    LLM_TOP_K: int = Field(..., ge=0, description="Default LLM top-k sampling value.")
-    LLM_NUM_CTX: int = Field(..., ge=4096, description="LLM context length (토큰 수).")
-    # 새로 추가할 필드
-    LLM_STREAM: bool = Field(default=False, description="스트리밍 응답 활성화 여부")
-    LLM_FORMAT: Literal["", "json"] = Field(default="", description='응답 형식 지정 ("", "json")')
+    LLM_STREAM: bool = Field(default=False, description="스트리밍 응답 활성화 여부 (현재 미지원)")
     
     # Agent Registry
     AGENTS_MODULE_PATH: str = Field(..., description="Agent 구현 모듈 경로 (예: agents.implementations)")

@@ -18,7 +18,7 @@ nodes:
       timeout: 300
 
   # 1) 사용자 주택 플랜 입력 Agent
-  - name: input_agent
+  - name: plan_input_agent
     agent: plan_input_agent
     config:
       max_iterations: 15
@@ -64,40 +64,71 @@ nodes:
 # ============================================
 edges:
   # ------------------------------------------------
-  # Direct edges (단순 고정 흐름)
-  #   👉 한 턴에 supervisor + 워커 하나만 실행하기 위해
-  #      기존 direct edge들을 모두 제거한다.
+  # Direct edges (단순 고정 흐름) - from / to 형식
   # ------------------------------------------------
-  direct: []
+  # direct:
+  #   # input_agent → validation_agent
+  #   - from: plan_input_agent
+  #     to: validation_agent
+
+  #   # validation_agent → supervisor_agent (단방향)
+  #   - from: validation_agent
+  #     to: supervisor_agent
+
+  #   # loan / saving / fund → supervisor_agent
+  #   - from: loan_agent
+  #     to: supervisor_agent
+
+  #   - from: saving_agent
+  #     to: supervisor_agent
+
+  #   - from: fund_agent
+  #     to: supervisor_agent
+
+    # ❌ 여기서는 summary_agent → __end__ 직접 연결 안 함
+    #    finish_points에서 summary_agent를 지정하면
+    #    GraphBuilder가 summary_agent → END edge를 자동 추가해 줌
 
   # ------------------------------------------------
   # Conditional edges (DynamicRouter 사용)
-  #   - supervisor_agent가 state를 보고 다음 워커를 선택
-  #   - 선택된 워커에서 바로 END로 종료 (finish_points 설정 때문)
   # ------------------------------------------------
   conditional:
     - from: supervisor_agent
       router: DynamicRouter
       paths:
-        input_agent: input_agent
-        validation_agent: validation_agent
+        plan_input_agent: plan_input_agent
         loan_agent: loan_agent
         saving_agent: saving_agent
         fund_agent: fund_agent
         summary_agent: summary_agent
         END: __end__
 
+    - from: loan_agent
+      router: DynamicRouter
+      paths:
+        supervisor_agent: supervisor_agent
+
+    - from: saving_agent
+      router: DynamicRouter
+      paths:
+        supervisor_agent: supervisor_agent
+
+    - from: fund_agent
+      router: DynamicRouter
+      paths:
+        supervisor_agent: supervisor_agent
+
+    # summary_agent는 plan의 마지막 단계이기 때문에 다시 supervisor로 갈 필요가 없음
+    - from: summary_agent
+      router: DynamicRouter
+      paths:
+        supervisor_agent: supervisor_agent
+        END: __end__
+      
 # ============================================
 # Graph 설정
 # ============================================
 entry_point: supervisor_agent
 
-finish_points:
-  # ✅ 이제 각 단계 에이전트가 "마지막 발화자"가 되도록 설정
-  #    한 번의 /chat/plan 호출 = supervisor + 이 중 하나만 실행
-  - input_agent
-  - validation_agent
-  - loan_agent
-  - saving_agent
-  - fund_agent
-  - summary_agent
+# finish_points:
+#   - summary_agent

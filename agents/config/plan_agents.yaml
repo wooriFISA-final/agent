@@ -1,34 +1,8 @@
 # ========================================
-# Plan / Supervisor / Loan / Saving / Fund / Summary Agents 설정
+# Plan / Loan / Saving / Fund / Summary Agents 설정
 # ========================================
 
 agents:
-  # --------------------------------------
-  # 0) 플로우 조율용 Supervisor Agent
-  #    @AgentRegistry.register("supervisor_agent")
-  # --------------------------------------
-  supervisor_agent:
-    name: "supervisor_agent"
-    description: "input/loan/saving/fund/summary 에이전트를 조율하여 주택 자금/자산관리 전체 플로우를 관리하는 상위 Supervisor Agent"
-    enabled: true
-
-    max_retries: 3
-    timeout: 300
-    max_iterations: 10
-
-    tags:
-      - plan
-      - supervisor
-
-    llm_config:
-      model: "qwen3:8b"
-      temperature: 0.2     # 의사결정이므로 안정적으로
-      top_p: 0.5
-      top_k: 10
-      num_ctx: 40960
-      stream: false
-      format: ""           # 내부 DELEGATE/결정용이므로 자유 텍스트
-
   # --------------------------------------
   # 1) 사용자 주택 플랜 입력용 Agent
   #    @AgentRegistry.register("plan_input_agent")
@@ -47,13 +21,10 @@ agents:
       - input
 
     llm_config:
-      model: "qwen3:8b"
-      temperature: 0.3     # 질문/리액션이 조금 더 자연스럽게
-      top_p: 0.7
-      top_k: 20
-      num_ctx: 40960
+      model: "gpt-oss-20b"
+      temperature: 0.1
+      top_p: 0.1
       stream: false
-      format: ""           # 자유 텍스트(내부에서 JSON 필요하면 프롬프트로 강제)
 
   # --------------------------------------
   # 2) 입력 검증 / 정규화 Agent
@@ -73,13 +44,10 @@ agents:
       - validation
 
     llm_config:
-      model: "qwen3:8b"
-      temperature: 0.1     # 최대한 일관되게
-      top_p: 0.3
-      top_k: 10
-      num_ctx: 40960
+      model: "gpt-oss-20b"
+      temperature: 0.1
+      top_p: 0.1
       stream: false
-      format: "json"       # 검증 결과를 JSON으로 강제하고 싶으면 사용 (아니면 ""로 둬도 됨)
 
   # --------------------------------------
   # 3) 대출 한도/추천 Agent
@@ -100,14 +68,10 @@ agents:
       - loan
 
     llm_config:
-      model: "qwen3:8b"
-      temperature: 0.15    # 계산/설명 모두 안정적으로
+      model: "gpt-oss-20b"
+      temperature: 0.15
       top_p: 0.4
-      top_k: 10
-      num_ctx: 40960
       stream: false
-      format: ""
-
   # --------------------------------------
   # 4) 예·적금 추천 및 입력 Agent
   #    @AgentRegistry.register("saving_agent")
@@ -127,14 +91,10 @@ agents:
       - input
 
     llm_config:
-      model: "qwen3:8b"
+      model: "gpt-oss-20b"
       temperature: 0.3
       top_p: 0.7
-      top_k: 20
-      num_ctx: 40960
       stream: false
-      format: ""
-
   # --------------------------------------
   # 5) 펀드 추천 및 입력 Agent
   #    @AgentRegistry.register("fund_agent")
@@ -154,14 +114,10 @@ agents:
       - input
 
     llm_config:
-      model: "qwen3:8b"
-      temperature: 0.35    # 설명+제안이 자연스럽게
+      model: "gpt-oss-20b"
+      temperature: 0.35
       top_p: 0.8
-      top_k: 20
-      num_ctx: 40960
       stream: false
-      format: ""
-
   # --------------------------------------
   # 6) 최종 자산관리 요약 리포트 Agent
   #    @AgentRegistry.register("summary_agent")
@@ -180,10 +136,7 @@ agents:
       - report
 
     llm_config:
-      model: "qwen3:8b"
-      temperature: 0.25    # 너무 들뜨지 않게, 그래도 말투는 부드럽게
+      model: "gpt-oss-20b"
+      temperature: 0.25
       top_p: 0.7
-      top_k: 20
-      num_ctx: 40960
       stream: false
-      format: ""

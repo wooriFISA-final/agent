@@ -1,33 +1,34 @@
 import logging
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage
-from agents.base.agent_base import AgentBase, BaseAgentConfig,AgentState
+from agents.base.agent_base import AgentBase, BaseAgentConfig, AgentState
 from agents.registry.agent_registry import AgentRegistry
-from core.llm.llm_manger import LLMManager
 
-#log 설정
 logger = logging.getLogger("agent_system")
+
 
 @AgentRegistry.register("template_agent")
 class TemplateAgent(AgentBase):
     """
-    사용자 등록 자동화 Agent
+    Template Agent
     
     역할:
-    - 사용자 등록/조회/수정/삭제 작업 처리
-    - MCP 도구를 사용한 데이터베이스 작업
+    - 새로운 Agent 구현을 위한 템플릿
     
     필요한 구현:
-    - get_system_prompt(): 도구 선택 프롬프트
-    - validate_input(): 입력 검증
+    - get_agent_role_prompt(): Agent 역할 정의
+    - validate_input(): 입력 검증 (선택)
+    - pre_execute(): 전처리 (선택)
     """
-    # Agent의 초기화
+    
     def __init__(self, config: BaseAgentConfig):
         super().__init__(config)
-        #사용 가능한 Tool 목록
-        self.allowed_tools = 'ALL'
+        # 사용 가능한 Tool 목록 (Tool 이름 리스트 또는 'ALL')
+        self.allowed_tools = []
+        
+        # 위임 가능한 Agent 목록
+        self.allowed_agents = []
 
-    # 전처리: 입력 데이터 
     def validate_input(self, state: Dict[str, Any]) -> bool:
         """state에 messages가 있고, HumanMessage가 포함되어 있는지 확인"""
         messages = state.get("messages")
@@ -41,18 +42,11 @@ class TemplateAgent(AgentBase):
             return False
         
         return True
+        
     def pre_execute(self, state: AgentState) -> AgentState:
-        """
-            실행 전 전처리
-    
-            Override 가능: 구체적인 Agent에서 추가 전처리 구현
-        """
-        # 기본: 아무것도 하지 않음
+        """실행 전 전처리"""
         return state
     
-        # =============================
-    # 구체적인 Agent의 역할 정의
-    # =============================
     def get_agent_role_prompt(self) -> str:
         """
         Agent의 역할 정의
