@@ -6,8 +6,8 @@ nodes:
     # 🚨 [변경됨]: agent: report_main_agent -> report_agent
     agent: report_agent 
     config:
-      max_iterations: 20
-      timeout: 480 # 8분
+      max_iterations: 300
+      timeout: 300 # 8분
       
 edges:
   # 최종 완료 (DynamicRouter)
@@ -15,4 +15,6 @@ edges:
     router: DynamicRouter
     paths:
       REPORT_COMPLETE: __end__
-      TOOL_FAIL: __end__
+      # TOOL_FAIL: __end__
+      END: __end__
+

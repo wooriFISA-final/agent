@@ -1,31 +1,3 @@
-# filename: report_agents.yaml
-
-agents:
-  report_agent: 
-    name: "report_agent" 
-    description: "소비, 투자, 정책 및 사용자 프로필 변동 데이터를 통합 분석하여 고객 맞춤형 월간 재무 보고서를 생성하는 Agent"
-    enabled: true
-
-    # 실행 제어 설정
-    max_retries: 2
-    timeout: 300  # 5분
-    max_iterations: 100
-
-    # Agent 분류 태그
-    tags:
-      - report
-      - analysis
-      - financial_data
-    
-    # LLM 설정
-    llm_config:
-      model: "qwen3:8b"
-      temperature: 0.1
-      top_p: 0.7
-      top_k: 20
-      stream: false
-      format: ""
-
 # ========================================
 # Config 필드별 설명
 # ========================================
@@ -67,6 +39,7 @@ agents:
 #
 #   temperature: 0.1 ~ 0.9
 #     - 창의성/확률성 조정
+#     - 0.1: 매우 일관적 (분석/의사결정)
 #     - 0.3-0.5: 균형 (일반 사용)
 #     - 0.8-0.9: 매우 창의적 (아이디어)
 #
@@ -95,42 +68,43 @@ agents:
 #     - "json": JSON 강제
 # ========================================
 
-# agents:
-#   user_create_agent:
-#     name: "user_create_agent"
-#     description: "사용자의 정보를 받아 사용자 DB를 생성하는 Agent"
-#     enabled: true    # 활성화 (사용 가능)
-#     # enabled: false   # 비활성화 (로드는 하지만 사용 안함) 
+agents:
+  user_create_agent:
+    name: "user_create_agent"
+    description: "사용자의 정보를 받아 사용자 DB를 생성하는 Agent"
+    enabled: true    # 활성화 (사용 가능)
+    # enabled: false   # 비활성화 (로드는 하지만 사용 안함) 
     
-#     max_retries: 3
-#     timeout: 180
-#     max_iterations: 100
+    max_retries: 3
+    timeout: 180
+    max_iterations: 100
     
-#     tags:
-#       - plan
-#       # - report # 비활성화된 태그 예시
+    tags:
+      - plan
+      # - report # 비활성화된 태그 예시
 
-#     llm_config:
-#       model: "gpt-oss-20b"
-#       temperature: 0.1
-#       top_p: 0.1
-#       stream: false
+    llm_config:
+      model: "gpt-oss-20b"
+      temperature: 0.1
+      top_p: 0.1
+      stream: false
     
-#   user_check_agent:
-#     name: "user_check_agent"
-#     description: "사용자의 정보를 받아 DB에서 사용자 정보를 조회하는 Agent"
-#     enabled: true
+  user_check_agent:
+    name: "user_check_agent"
+    description: "사용자의 정보를 받아 DB에서 사용자 정보를 조회하는 Agent"
+    enabled: true
     
-#     max_retries: 3
-#     timeout: 180
-#     max_iterations: 100
+    max_retries: 3
+    timeout: 180
+    max_iterations: 100
     
-#     tags:
-#       - plan
-#       # - report
+    tags:
+      - plan
+      # - report
     
-#     llm_config:
-#       model: "gpt-oss-20b"
-#       temperature: 0.1        
-#       top_p: 0.1
-#       stream: 
+    llm_config:
+      model: "gpt-oss-20b"
+      temperature: 0.1        
+      top_p: 0.1
+      stream: false
+    
