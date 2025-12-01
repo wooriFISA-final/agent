@@ -87,6 +87,7 @@ class ExecutionStatus(str, Enum):
     """Agent 실행 상태"""
     PENDING = "pending"           # 대기 중
     RUNNING = "running"           # 실행 중
+    RESPONDING = "responding"     # 응답 완료, 후처리 대기 중
     SUCCESS = "success"           # 성공
     FAILED = "failed"             # 실패
     TIMEOUT = "timeout"           # 타임아웃
@@ -105,11 +106,12 @@ class AgentState(TypedDict, total=False):
     - messages: 현재 에이전트의 작업 메시지 (deprecated, 하위호환용)
     """
     # === 메시지 처리 ===
-    global_messages: Annotated[List[BaseMessage], add_messages]  # ✅ 전체 대화 기록
-    messages: Annotated[List[BaseMessage], add_messages]  # 하위호환용 (기존 코드)
+    global_messages: Annotated[List[BaseMessage], add_messages]  
+    messages: Annotated[List[BaseMessage], add_messages] 
     
     # === 실행 메타데이터 ===
     session_id: str
+    user_id: str  # ✅ 추가: 사용자 ID (MCP Tool 호출 시 사용)
     timestamp: datetime
     current_agent: str
     execution_path: List[str]
@@ -139,7 +141,7 @@ class AgentState(TypedDict, total=False):
     # === Agent 위임 (DELEGATE) ===  
     next_agent: str
     delegation_reason: str
-    previous_agent: str  # ✅ 추가: 이전 에이전트 추적용
+    previous_agent: str  
 # ============================================================================
 # 3. State 빌더 - 상태 생성 및 관리 헬퍼
 # ============================================================================
@@ -151,6 +153,7 @@ class StateBuilder:
     def create_initial_state(
         messages: List[BaseMessage],
         session_id: Optional[str] = None,
+        user_id: Optional[str] = None,  # ✅ 추가: 사용자 ID
         max_iterations: int = 10,
         **kwargs
     ) -> AgentState:
@@ -158,11 +161,12 @@ class StateBuilder:
         
         state = AgentState(
             messages=messages,
-            global_messages=messages.copy(),  # ✅ 초기 메시지로 global_messages 초기화
+            global_messages=messages.copy(),  
             session_id=session_id or str(uuid4()),
+            user_id=user_id or "1",  # ✅ 임시 기본값 (나중에 프론트엔드에서 전달)
             timestamp=datetime.now(),
             current_agent="",
-            previous_agent="",  # ✅ 추가
+            previous_agent="",  
             execution_path=[],
             status=ExecutionStatus.PENDING,
             iteration=0,

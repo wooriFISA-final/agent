@@ -47,7 +47,7 @@ class DynamicRouter(RouterBase):
         
         우선순위:
         1. Agent가 명시적으로 지정한 next_agent (DELEGATE)
-        2. 실행 상태 확인 (SUCCESS/FAILED/TIMEOUT → END)
+        2. 실행 상태 확인 (SUCCESS/FAILED/TIMEOUT → END, RESPONDING → 재진입)
         3. 기본값 (END)
         
         Args:
@@ -60,7 +60,13 @@ class DynamicRouter(RouterBase):
         # 2. 실행 상태 확인
         status = state.get("status", ExecutionStatus.PENDING)
         
-        if status == ExecutionStatus.SUCCESS:
+        if status == ExecutionStatus.RESPONDING:
+            # 응답 완료 + 후처리 필요 → 같은 Agent 재진입
+            current_agent = state.get("current_agent")
+            logger.info(f"⚙️ [DynamicRouter] Status: RESPONDING → Re-entering {current_agent} for post-processing")
+            return current_agent
+        
+        elif status == ExecutionStatus.SUCCESS:
             logger.info(f"✅ [DynamicRouter] Status: SUCCESS → END")
             return "END"
         

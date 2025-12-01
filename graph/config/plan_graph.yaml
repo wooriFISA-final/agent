@@ -64,32 +64,6 @@ nodes:
 # ============================================
 edges:
   # ------------------------------------------------
-  # Direct edges (단순 고정 흐름) - from / to 형식
-  # ------------------------------------------------
-  # direct:
-  #   # input_agent → validation_agent
-  #   - from: plan_input_agent
-  #     to: validation_agent
-
-  #   # validation_agent → supervisor_agent (단방향)
-  #   - from: validation_agent
-  #     to: supervisor_agent
-
-  #   # loan / saving / fund → supervisor_agent
-  #   - from: loan_agent
-  #     to: supervisor_agent
-
-  #   - from: saving_agent
-  #     to: supervisor_agent
-
-  #   - from: fund_agent
-  #     to: supervisor_agent
-
-    # ❌ 여기서는 summary_agent → __end__ 직접 연결 안 함
-    #    finish_points에서 summary_agent를 지정하면
-    #    GraphBuilder가 summary_agent → END edge를 자동 추가해 줌
-
-  # ------------------------------------------------
   # Conditional edges (DynamicRouter 사용)
   # ------------------------------------------------
   conditional:
@@ -97,32 +71,57 @@ edges:
       router: DynamicRouter
       paths:
         plan_input_agent: plan_input_agent
+        validation_agent: validation_agent
         loan_agent: loan_agent
         saving_agent: saving_agent
         fund_agent: fund_agent
         summary_agent: summary_agent
         END: __end__
 
+    - from: plan_input_agent
+      router: DynamicRouter
+      paths:
+        validation_agent: validation_agent
+        supervisor_agent: supervisor_agent
+        plan_input_agent: plan_input_agent
+
+        END: __end__
+
+    - from: validation_agent
+      router: DynamicRouter
+      paths:
+        plan_input_agent: plan_input_agent
+        validation_agent: validation_agent        
+        supervisor_agent: supervisor_agent
+        END: __end__
+
     - from: loan_agent
       router: DynamicRouter
       paths:
         supervisor_agent: supervisor_agent
+        loan_agent: loan_agent
+        END: __end__
 
     - from: saving_agent
       router: DynamicRouter
       paths:
         supervisor_agent: supervisor_agent
+        saving_agent: saving_agent
+        END: __end__
 
     - from: fund_agent
       router: DynamicRouter
       paths:
         supervisor_agent: supervisor_agent
+        fund_agent: fund_agent
+        END: __end__
 
     # summary_agent는 plan의 마지막 단계이기 때문에 다시 supervisor로 갈 필요가 없음
     - from: summary_agent
       router: DynamicRouter
       paths:
         supervisor_agent: supervisor_agent
+        summary_agent: summary_agent
         END: __end__
       
 # ============================================

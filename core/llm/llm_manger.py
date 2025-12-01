@@ -11,6 +11,53 @@ from core.config.setting import settings
 logger = setup_logger()
 
 
+def _sanitize_extended_thinking_tokens(text: str) -> str:
+    """
+    Extended Thinking 모델의 내부 제어 토큰을 제거합니다.
+    
+    Extended Thinking 모델은 추론 과정에서 <|constrain|>, <|end|>, <|start|>,
+    <|channel|> 등의 특수 토큰을 사용하는데, 이러한 토큰이 메시지 내용에 포함되면
+    Bedrock API가 ValidationException을 발생시킵니다.
+    
+    Args:
+        text: 원본 텍스트
+        
+    Returns:
+        제어 토큰이 제거된 텍스트
+    """
+    if not isinstance(text, str):
+        return text
+    
+    # Extended Thinking 제어 토큰 패턴
+    # <|...| > 형식의 모든 제어 토큰 제거
+    import re
+    
+    # 알려진 제어 토큰들
+    control_tokens = [
+        r'<\|constrain\|>',
+        r'<\|end\|>',
+        r'<\|start\|>',
+        r'<\|channel\|>',
+        r'<\|reasoning\|>',
+        r'<\|reflection\|>',
+        r'<\|thinking\|>',
+    ]
+    
+    # 모든 <|...|> 패턴을 포괄적으로 제거
+    pattern = r'<\|[^|]+\|>'
+    
+    original_text = text
+    text = re.sub(pattern, '', text)
+    
+    # 제거가 발생했으면 로그 기록
+    if text != original_text:
+        logger.warning(f"⚠️ Extended Thinking 제어 토큰이 감지되어 제거되었습니다.")
+        logger.debug(f"   원본: {original_text[:100]}...")
+        logger.debug(f"   정제: {text[:100]}...")
+    
+    return text
+
+
 class LLMManager:
     """
     LLM 관리 클래스 (싱글톤)
@@ -139,7 +186,9 @@ class LLMManager:
             
             if role == "system":
                 # System 메시지는 별도 배열로
-                system_messages.append({"text": content})
+                # 제어 토큰 제거
+                sanitized_content = _sanitize_extended_thinking_tokens(content)
+                system_messages.append({"text": sanitized_content})
                 
             elif role in ["user", "assistant"]:
                 # content가 이미 Bedrock 형식의 리스트인지 확인
@@ -156,16 +205,30 @@ class LLMManager:
                     if not filtered_content:
                         filtered_content = [{"text": ""}]
                     
-                    # 이미 Bedrock 형식이면 필터링된 content 사용
+                    # ✅ 텍스트 블록의 제어 토큰 제거
+                    sanitized_content = []
+                    for block in filtered_content:
+                        if isinstance(block, dict) and "text" in block:
+                            # 텍스트 블록이면 제어 토큰 제거
+                            sanitized_block = block.copy()
+                            sanitized_block["text"] = _sanitize_extended_thinking_tokens(block["text"])
+                            sanitized_content.append(sanitized_block)
+                        else:
+                            # toolUse, image 등 다른 블록은 그대로 유지
+                            sanitized_content.append(block)
+                    
+                    # 이미 Bedrock 형식이면 정제된 content 사용
                     conversation_messages.append({
                         "role": role,
-                        "content": filtered_content
+                        "content": sanitized_content
                     })
                 else:
                     # 일반 텍스트 메시지
+                    # 제어 토큰 제거
+                    sanitized_text = _sanitize_extended_thinking_tokens(str(content))
                     conversation_messages.append({
                         "role": role,
-                        "content": [{"text": str(content)}]
+                        "content": [{"text": sanitized_text}]
                     })
                 
             elif role == "tool":

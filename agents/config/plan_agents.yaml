@@ -3,6 +3,24 @@
 # ========================================
 
 agents:
+  supervisor_agent:
+    name: "supervisor_agent"
+    description: "사용자의 주택 자금 계획 수립을 처음부터 끝까지 orchestration하는 최상위 의사결정자입니다."
+    enabled: true
+
+    max_retries: 3
+    timeout: 300          # 입력 대화형이라 넉넉하게
+    max_iterations: 15    # 질문-응답 반복 여유 있게
+
+    tags:
+      - plan
+
+    llm_config:
+      model: "gpt-oss-120b"
+      temperature: 0.1
+      top_p: 0.1
+      stream: false
+
   # --------------------------------------
   # 1) 사용자 주택 플랜 입력용 Agent
   #    @AgentRegistry.register("plan_input_agent")
@@ -21,9 +39,9 @@ agents:
       - input
 
     llm_config:
-      model: "gpt-oss-20b"
-      temperature: 0.1
-      top_p: 0.1
+      model: "gpt-oss-120b"
+      temperature: 0.01
+      top_p: 0.01
       stream: false
 
   # --------------------------------------
@@ -44,7 +62,7 @@ agents:
       - validation
 
     llm_config:
-      model: "gpt-oss-20b"
+      model: "gpt-oss-120b"
       temperature: 0.1
       top_p: 0.1
       stream: false
@@ -68,7 +86,7 @@ agents:
       - loan
 
     llm_config:
-      model: "gpt-oss-20b"
+      model: "gpt-oss-120b"
       temperature: 0.15
       top_p: 0.4
       stream: false
@@ -91,9 +109,9 @@ agents:
       - input
 
     llm_config:
-      model: "gpt-oss-20b"
-      temperature: 0.3
-      top_p: 0.7
+      model: "gpt-oss-120b"
+      temperature: 0.1
+      top_p: 0.1
       stream: false
   # --------------------------------------
   # 5) 펀드 추천 및 입력 Agent
