@@ -157,6 +157,16 @@ class AgentBase(ABC):
             return {"role": "user", "content": [{"text": message.content}]}
         
         else:
+            # 알 수 없는 메시지 타입에 대한 상세 로깅
+            msg_type = type(message).__name__
+            msg_attrs = {k: v for k, v in message.__dict__.items() if not k.startswith('_')}
+            logger.warning(f"[{self.name}] ⚠️ Unknown message type: {msg_type}")
+            logger.warning(f"[{self.name}]    Message attributes: {msg_attrs}")
+            
+            # 메시지에 role 속성이 있으면 로그로 남기기
+            if hasattr(message, 'type'):
+                logger.warning(f"[{self.name}]    Message.type: {message.type}")
+            
             return {"role": "user", "content": [{"text": str(message)}]}
     
     def _convert_messages_to_dict(self, messages: List) -> List[Dict[str, str]]:
@@ -686,8 +696,8 @@ class AgentBase(ABC):
                 tool_config=bedrock_tool_config,
                 tool_choice={"auto": {}},
                 return_full_response=True,
-                temperature=0.1,
-                top_p=0.1
+                temperature=0.01,
+                top_p=0.01
             )
             
             stop_reason = response.get("stopReason")

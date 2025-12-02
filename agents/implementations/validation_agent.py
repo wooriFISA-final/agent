@@ -28,8 +28,8 @@ class ValidationAgent(AgentBase):
         super().__init__(config)
 
         # 이 Agent가 사용할 MCP Tool 이름 목록
-        self.allowed_tools = [
-            "check_house_price"         # 지역/주택유형 평균 시세 조회
+        self.allowed_tools: list[str]= [
+            "check_house_price",         # 지역/주택유형 평균 시세 조회
             "validate_input_data",      # 6개 필드 검증·정규화
             "upsert_member_and_plan",   # members & plans 기본 계획 저장/갱신
             "save_user_portfolio",      # ✅ 예/적/펀드 배분 금액을 members에 저장
@@ -71,14 +71,15 @@ class ValidationAgent(AgentBase):
     def get_agent_role_prompt(self) -> str:
         return """
 [Persona]
-당신은 plan_input_agent에서 입력한 정보를 검증하는 에이전트입니다. 아래 작성된 [plan_input_agent Informations], [Instructions], [Step-by-Step], [MCP Tools]에 따라 행동하십시오.
+당신은 사용자의 정보를 검증하는 에이전트입니다. 아래 작성된 [Instructions], [Step-by-Step], [MCP Tools]에 따라 행동하십시오.
 
 [Instructions]
-1. 반드시 [Step-by-Step]에 따라서 실행해야 하는 동작을 결정해라.
+1. 반드시 [Step-by-Step]에 따라서 실행해라.
 2. Delegate는 Response(end_turn)가 아니 Tool이다.
+3. [MCP Tools]을 사용한 작업은 너의 역할이다.
 
 [Step-by-Step]
-1. validate_input_data Tool 호출 
+1. validate_input_data Tool을 호출하여 6개 정보를 파싱·검증·정규화해라.
   - 입력된 6개 정보(initial_prop, hope_location, hope_price, hope_housing_type, income_usage_ratio, ratio_str)를 파싱하고, 유효성 검증을 수행하며, 정규화된 형태로 변환합니다.
 
 2. validate_input_data 결과 확인
@@ -86,14 +87,14 @@ class ValidationAgent(AgentBase):
   - 결과가 실패(success = false)일 경우 부족한 정보를 사용자에게 다시 질문하도록 합니다.
 
 3. check_house_price Tool 호출
-  - validate_input_data에서 정규화된 데이터(hope_location, hope_housing_type, hope_price)를 입력하여 사용자의 희망 주택 가격이 해당 지역·유형의 평균 시세와 부합하는지 검사합니다.
+  - 사용자의 희망 주택 가격이 해당 지역·유형의 평균 시세와 부합하는지 검사해라.
 
 4. check_house_price 결과 확인
   - 검사(success = true)이면 5단계(upsert_member_and_plan)를 실행해라. 
-  - 실패일 경우 또는 시세와 부합하지 않는 경우 사용자의 입력을 다시 받도록 합니다.
+  - 실패일 경우 또는 시세와 부합하지 않는 경우 사용자의 입력을 다시 받도록 한다.
   
 5. upsert_member_and_plan Tool 호출
-  - 검증·정규화된 기본 계획 값 (initial_prop, hope_location, hope_price, hope_housing_type, income_usage_ratio)을 members테이블과 plans 테이블에 저장/갱신합니다.
+  - 검증·정규화된 기본 계획 값 (initial_prop, hope_location, hope_price, hope_housing_type, income_usage_ratio)을 members테이블과 plans 테이블에 저장/갱신해라.
    - validate_input_data, check_house_price 성공했을 경우에만 사용가능하다.
    
 6. upsert_member_and_plan 결과 확인
@@ -101,7 +102,7 @@ class ValidationAgent(AgentBase):
   - 실패일 경우 다시 upser_member_and_plan tool을 시도해라.
   
 7. save_user_portfolio Tool 호출
-  - 정규화된 initial_prop과 ratio_str을 사용하여 예금(deposit), 적금(savings), 펀드(fund) 금액을 계산하고 저장합니다.  
+  - 정규화된 initial_prop과 ratio_str을 사용하여 예금(deposit), 적금(savings), 펀드(fund) 금액을 계산하고 저장해라.  
   - 이 단계는 validate_input_data와 check_house_price가 모두 성공한 경우에만 실행합니다.
 
 8. Response
@@ -123,14 +124,3 @@ class ValidationAgent(AgentBase):
    - 역할: 사용자가 입력한 초기 자산, 예금:적금:펀드 자산 배분 비율을 통해서 예금/적금/펀드 배분 금액을 members 테이블의 deposit_amount, savings_amount, fund_amount 컬럼에 저장합니다.
    - validate_input_data, check_house_price 성공했을 경우에만 사용 가능하다.
 """
-
-# [plan_input_agent Informations]
-
-# plan_input_agent에서 보통 다음 6개 정보가 대화 맥락과 Tool 결과에 포함되어 있습니다.
-# 1) initial_prop        : 초기 자산 (예: "3천만", 30000000)
-# 2) hope_location       : 희망 지역 (예: "서울 마포구")
-# 3) hope_price          : 희망 주택 가격
-# 4) hope_housing_type   : 주택 유형 (예: "아파트")
-# 5) income_usage_ratio  : 월 소득 중 주택 자금에 쓸 비율(%)
-# 6) investment_ratio    : 예금:적금:펀드 자산 배분 비율 (예: "30:40:30")
-#    - MCP Tool 입력에서는 주로 **ratio_str** 라는 필드 이름으로 전달됩니다.

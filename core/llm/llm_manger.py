@@ -267,6 +267,24 @@ class LLMManager:
                         "content": [tool_result_block]
                     })
         
+            else:
+                # 알 수 없는 role → user로 변환
+                logger.warning(f"⚠️ Unknown message role '{role}' encountered, converting to 'user'")
+                logger.warning(f"   Message content: {str(content)[:200]}...")
+                
+                # content 타입에 따라 처리
+                if isinstance(content, list):
+                    conversation_messages.append({
+                        "role": "user",
+                        "content": content
+                    })
+                else:
+                    sanitized_text = _sanitize_extended_thinking_tokens(str(content))
+                    conversation_messages.append({
+                        "role": "user",
+                        "content": [{"text": sanitized_text}]
+                    })
+    
         return system_messages, conversation_messages
     
     @classmethod

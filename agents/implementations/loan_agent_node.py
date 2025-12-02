@@ -36,7 +36,7 @@ class LoanAgent(AgentBase):
         # 이 Agent가 사용할 MCP Tool 이름 목록
         # (실제 HTTP 경로 매핑은 MCP 프레임워크/호스트 레이어에서 처리한다고 가정)
         self.allowed_tools = [
-            "get_user_loan_overview",
+            "calculate_final_loan",
             "calc_shortage_amount",  # plan_agent_tools.py의 CalcShortageAmountRequest.tool_name 기준
             "update_loan_result",
         ]
@@ -93,20 +93,19 @@ class LoanAgent(AgentBase):
 1. [Step-by-Step]에 따라 실행합니다.
 2. Delegate는 Response(end_turn)가 아니 Tool이다.
 
-
 [Step-by-Step]
-1. get_user_loan_overview Tool 호출
-  - 대출 상품 관련 정보를 가져와야 한다.
+1. calculate_final_loan Tool 호출
+  - 사용자 정보를 통하여 사용자가 가입 가능한 대출 상품에 대한 정보와 대출 가능 금액, 필요 자기자본 등에 정보를 가져와야 한다.
   
-2. get_user_loan_overview 결과 확인
-  - 결과가 성공(success == true)일 경우 다음 단계로 진행해라.  
+2. calculate_final_loan 결과 확인
+  - 결과가 성공(success == true)이면 다음 단계(3번)로 진행해라.
 
 3. calc_shortage_amount를 Tool 호출
   - 사용자 희망한 주택을 구매하기 위해 calc_shortage_amount를 사용하여 희망 주택가격, 예상 대출금, 보유 자산을 기반으로 부족 자금을 계산해야 한다.
   
 4. calc_shortage_amount 결과 확인
   - 결과가 성공(success == true)이고 부족 자금이 상적으로 계산된 경우 다음 단계로 진행해라.
-  
+    
 5. update_loan_result Tool 호출
   - 대출 가능 금액과 부족 자금을 저장시켜야 한다.
 
@@ -118,8 +117,8 @@ class LoanAgent(AgentBase):
   - 서비스의 다음 단계인 예금/적금을 진행할지의 여부를 확인하는 내용도 추가해라.
 
 [MCP Tools]
-1) get_user_loan_overview
-   - 역할: DB에서 members, plans, loan_product를 조인하여 한 번에 대출 관련 핵심 정보를 가져옵니다.
+1) calculate_final_loan
+   - 역할: 사용자 정보를 통하여 사용자가 가입 가능한 대출 상품에 대한 정보와 대출 가능 금액, 필요 자기자본 등에 정보를 가져온다.
 
 2) calc_shortage_amount
    - 역할: 희망 주택가격, 예상 대출금, 보유 자산을 기반으로 부족 자금을 계산합니다.

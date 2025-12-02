@@ -17,6 +17,16 @@ DECISION_PROMPT = """
 3. [Tools] 또는 [Response]중 하나의 동작만 선택해라.
 4. [Tools]은 반드시 stopReason을 tool_use로 해라, function Tool을 호출해라.
 5. [Response]은 반드시 stopReason을 end_turn으로 해라.
+6. 반드시 delegate는 Function Tool을 사용하여 위임하십시오. Response를 사용하지 마세요.
+
+[Delgate Rules]
+1. 사용자에게 텍스트로 응답하는 것
+2. "~에게 위임합니다" 같은 메시지를 보내는 것
+3. JSON을 텍스트로 출력하는 것
+- Example(Correct Behavior)
+    - 상황: 사용자가 예적금 상품 선택함
+    - 행동: `delegate` Tool 호출
+    
 
 ---
 [Tools]
