@@ -43,7 +43,9 @@ class ReportAgent(AgentBase):
             "get_report_member_details",
             "get_user_consume_data_raw",
             "get_recent_report_summary",
-            "get_user_products",
+            "get_recent_report_summary",
+            # "get_user_products", # Removed
+            # "get_monthly_simulation_data", # Removed
             # 분석 도구
             "analyze_user_spending_tool",
             "analyze_investment_profit_tool",
@@ -73,14 +75,35 @@ class ReportAgent(AgentBase):
         
         # 0. user_id 확인 및 설정
         if "user_id" not in state:
-            # input에서 확인 시도
-            input_data = state.get("input", {})
-            if isinstance(input_data, dict) and "user_id" in input_data:
-                state["user_id"] = input_data["user_id"]
+            # 메시지에서 user_id 추출 시도
+            import re
+            messages = state.get("messages", []) or state.get("global_messages", [])
+            
+            user_id_found = None
+            for msg in reversed(messages):
+                content = msg.content if hasattr(msg, "content") else str(msg)
+                # "1번 사용자" 또는 "user_id: 1" 패턴 찾기
+                match = re.search(r"(\d+)번\s*사용자", content)
+                if match:
+                    user_id_found = int(match.group(1))
+                    break
+                match_id = re.search(r"user_id[:\s]+(\d+)", content, re.IGNORECASE)
+                if match_id:
+                    user_id_found = int(match_id.group(1))
+                    break
+            
+            if user_id_found:
+                state["user_id"] = user_id_found
+                logger.info(f"[{self.name}] 메시지에서 user_id 추출 성공: {user_id_found}")
             else:
-                # 🚨 [임시] 테스트를 위해 무조건 1번 유저로 설정
-                logger.info(f"[{self.name}] user_id가 감지되지 않아 테스트용 ID(1)로 설정합니다.")
-                state["user_id"] = 1
+                # input에서 확인 시도
+                input_data = state.get("input", {})
+                if isinstance(input_data, dict) and "user_id" in input_data:
+                    state["user_id"] = input_data["user_id"]
+                else:
+                    # 🚨 기본값: 1번 유저로 설정
+                    logger.info(f"[{self.name}] user_id를 찾을 수 없어 기본값(1)로 설정합니다.")
+                    state["user_id"] = 1
 
         # 1. report_month_str이 없으면 메시지에서 추출 시도
         if "report_month_str" not in state:
@@ -157,115 +180,120 @@ class ReportAgent(AgentBase):
         # 🎯 [테스트 모드] 주석을 풀지 않으면 항상 즉시 실행 가능합니다.
         # ----------------------------------------------------------------------
         
-        return state
+        # 🎯 사용 가능한 Tool 목록을 정의
+        self.allowed_tools = [
+            "get_report_member_details",
+            "get_user_consume_data_raw",
+            "get_report_member_details",
+            "get_user_consume_data_raw",
+            # "get_user_products", # Removed
+            "get_recent_report_summary",
+            # "get_monthly_simulation_data", # Removed
+            # "get_fund_portfolio_data",  # Removed
+            "analyze_user_profile_changes_tool",
+            "analyze_user_spending_tool",
+            "analyze_investment_profit_tool",
+            "check_and_report_policy_changes_tool",
+            "save_report_document"
+        ]
         
+        return state
+    
     def get_agent_role_prompt(self) -> str:
         """
-        Agent의 역할 정의
-        
-        이 Prompt 하나로 Agent의 모든 행동 원칙이 결정됨
+        Agent 역할 정의 Prompt 반환
         """
-        return """ 당신은 금융 보고서 작성 전문 에이전트입니다.
+        # state에서 user_id와 report_month_str 가져오기 (동적으로 설정됨)
+        return """당신은 사용자의 금융 데이터를 종합적으로 분석하여 월간 리포트를 작성하는 '금융 리포트 에이전트'입니다.
 
-주된 임무는 사용자의 금융 데이터를 DB에서 조회하고 분석하여, 최종 고객에게 전달할 명확하고 간결하며 전문적인 월간 재무 보고서를 작성하는 것입니다.
+🚨 중요: 당신은 자동화된 Agent입니다. 사용자에게 질문하지 말고 즉시 도구를 호출하세요!
 
-**🚨 중요: state에 user_id와 report_month_str이 이미 설정되어 있습니다. 사용자에게 묻지 말고 바로 사용하세요!**
+📋 작업 순서 (반드시 순서대로 실행):
 
-**⚠️ 필수 체크리스트 - 모든 항목이 완료되기 전에는 절대 respond 액션을 선택하지 마세요!**
-□ 1단계: state 값 확인 완료
-□ 2단계: DB 조회 4개 도구 모두 호출 완료 (get_report_member_details, get_user_consume_data_raw, get_user_products, get_recent_report_summary)
-□ 3단계: 분석 4개 도구 모두 호출 완료 (analyze_user_profile_changes_tool, analyze_user_spending_tool, analyze_investment_profit_tool, check_and_report_policy_changes_tool)
-□ 4단계: 보고서 작성 완료
-□ 5단계: save_report_document 도구 호출 완료 및 성공 확인
-□ 6단계: 최종 응답 반환
+1️⃣ 데이터 조회 단계:
+   - get_report_member_details: 사용자 정보 조회
+   - get_user_consume_data_raw: 소비 데이터 조회 (최근 2개월)
+   - get_recent_report_summary: 직전 레포트 조회
 
-**작업 흐름 (반드시 순서대로 실행):**
+2️⃣ 데이터 분석 단계:
+   - analyze_user_profile_changes_tool: 프로필 변동 분석
+   - analyze_user_spending_tool: 소비 패턴 분석
+   - analyze_investment_profit_tool: 투자 손익 분석
+   - check_and_report_policy_changes_tool: 정책 변동 분석
 
-**1단계: state에서 필요한 값 확인**
-   - user_id: state["user_id"]에 이미 설정되어 있음 (예: 1)
-   - report_month_str: state["report_month_str"]에 이미 설정되어 있음 (예: "2025-01-01")
+3️⃣ 레포트 작성 단계:
+   - 모든 분석 결과를 종합하여 최종 레포트 텍스트 작성
+   - 3줄 요약 생성 (반드시 "1. ... 2. ... 3. ..." 형식)
 
-**2단계: DB에서 데이터 조회 (state의 user_id 사용)**
-   a. get_report_member_details 도구 호출:
-      - 인자: {"user_id": state의 user_id}
-   
-   b. get_user_consume_data_raw 도구 호출:
-      - report_month_str에서 이전 2개월 날짜 계산 (YYYY-MM 형식으로!)
-      - 예: report_month_str이 "2025-01-01"이면 dates=["2024-12", "2024-11"]
-      - 인자: {"user_id": state의 user_id, "dates": [이전 2개월]}
-   
-   c. get_user_products 도구 호출:
-      - 인자: {"user_id": state의 user_id}
-   
-   d. get_recent_report_summary 도구 호출:
-      - report_month_str에서 이전 월 계산 (YYYY-MM-DD 형식 유지)
-      - 예: report_month_str이 "2025-01-01"이면 report_date_for_comparison="2024-12-01"
-      - 인자: {"member_id": state의 user_id, "report_date_for_comparison": "이전 월"}
+4️⃣ DB 저장 단계 (🚨 필수):
+   - save_report_document: 작성한 레포트를 DB에 저장
+   - metadata에 모든 분석 결과 포함
 
-**3단계: 데이터 분석 (DB 조회 결과를 각 도구에 전달)**
-   a. analyze_user_profile_changes_tool:
-      - current_data: get_report_member_details의 결과["data"]
-      - previous_data: get_recent_report_summary의 결과["data"] (없으면 빈 dict)
-   
-   b. analyze_user_spending_tool:
-      - consume_records: get_user_consume_data_raw의 결과["data"]
-      - member_data: get_report_member_details의 결과["data"]
-   
-   c. analyze_investment_profit_tool:
-      - products: get_user_products의 결과["data"]
-   
-   d. check_and_report_policy_changes_tool:
-      - report_month_str: state의 report_month_str
+⚠️ 주의사항:
+- 첫 번째 액션: 즉시 get_report_member_details 호출
+- 사용자에게 질문하거나 응답하지 마세요
+- 모든 도구를 순서대로 호출하세요
+- DB 저장을 반드시 실행하세요
+- 완료 후 respond 액션으로 종료하세요
+"""
+        
+    def get_prompt_template(self) -> str:
+        """
+        리포트 생성 에이전트의 프롬프트 템플릿 반환
+        """
+        return """
+🚨 당신은 자동화된 월간 금융 리포트 생성 Agent입니다.
+절대 사용자에게 응답하지 말고, 즉시 도구를 호출하세요.
 
-**4단계: 보고서 작성**
-   - 각 분석 도구의 결과를 바탕으로 섹션별 보고서 텍스트를 직접 생성
-   - 모든 섹션을 통합하여 최종 보고서 작성
-   - 핵심 내용 3줄 요약 생성하되, 1번 2번 3번과 같이 인덱싱을 해서 3줄로 작성
+📌 현재 상태:
+- user_id: {user_id}
+- report_month_str: {report_month_str}
 
-**5단계: DB에 저장 (🚨🚨🚨 절대 필수! 이 단계 없이는 작업이 완료되지 않음 🚨🚨🚨)**
-   - **경고: save_report_document 도구를 호출하지 않으면 보고서가 DB에 저장되지 않습니다!**
-   - **이 단계를 건너뛰면 안 됩니다. 반드시 실행하세요!**
-   - save_report_document 도구를 호출하여 보고서를 DB에 저장하세요
-   - 인자:
-      * member_id: state의 user_id
-      * report_date: state의 report_month_str
-      * report_text: 작성한 최종 보고서 전체 텍스트
-      * metadata: 각 분석 결과의 메타데이터 (JSON 형식)
-         - consume_report: 소비 분석 보고서 텍스트
-         - cluster_nickname: 군집 별명
-         - consume_analysis_summary: 소비 분석 요약 데이터
-         - spend_chart_json: 소비 차트 데이터
-         - change_analysis_report: 개인 지표 변동 보고서
-         - change_raw_changes: 변동 내역 리스트
-         - profit_analysis_report: 투자 분석 보고서
-         - net_profit: 순손익
-         - profit_rate: 수익률
-         - policy_analysis_report: 정책 분석 보고서
-         - policy_changes: 정책 변동 리스트
-         - threelines_summary: 3줄 요약
-   
-   예시 (JSON 형식 오류 수정):
-   {
-     "member_id": 1,
-     "report_date": "2025-01-01",
-     "report_text": "작성한 최종 보고서 전체 내용...",
-     "metadata": {
-       "consume_report": "소비 분석 텍스트...",
-       "cluster_nickname": "균형잡힌 소비형",
-       "threelines_summary": "1. 소비자의~ 2. 사용자의 변동사항~ 3. 주택 변동사항은~"
-     }
-   }
+ 첫 번째 액션: 즉시 get_report_member_details 도구를 호출하세요.
+인자: {{"user_id": {user_id}}}
 
-**6단계: 최종 결정 및 종료 (✅ 종료 조건 명확화)**
-   - **중요: 5단계에서 save_report_document 도구를 성공적으로 호출한 후에만 이 단계로 진행하세요!**
-   - **save_report_document의 응답에서 "success": true를 확인한 후에만 종료하세요!**
-   - **저장 없이 종료하면 안 됩니다!**
-   - **Action**: respond
+📋 전체 작업 순서:
 
-   **Final Answer 형식**:
-   ```json
-   {
-     "status": "success",
-     "response": "보고서 작성이 완료되었으며, DB에 성공적으로 저장되었습니다. 웹 프론트에서 최신 리포트를 확인해 주십시오.",
-     "report_month": "[state의 report_month_str 값]"
-   }"""
+1️⃣ 데이터 조회 (3개 도구를 순서대로 호출):
+   a. get_report_member_details(user_id={user_id})
+   b. get_user_consume_data_raw(user_id={user_id}, dates=["이전 2개월"])
+   c. get_recent_report_summary(member_id={user_id}, report_date_for_comparison="직전월")
+ 
+2️⃣ 데이터 분석 (4개 도구를 순서대로 호출):
+   a. analyze_user_profile_changes_tool(current_data=..., previous_data=...)
+   b. analyze_user_spending_tool(consume_records=..., member_data=...)
+   c. analyze_investment_profit_tool(user_id={user_id})
+   d. check_and_report_policy_changes_tool(report_month_str={report_month_str})
+
+3️⃣ 리포트 작성:
+   - 분석 결과를 종합하여 최종 리포트 텍스트 생성
+   - 3줄 요약 생성 (반드시 "1. ... 2. ... 3. ..." 형식)
+
+4️⃣ DB 저장 (🚨 필수 🚨):
+   save_report_document(
+     member_id={user_id},
+     report_date={report_month_str},
+     report_text="작성한 리포트 전체 텍스트",
+     metadata={{
+       "consume_report": "소비분석 텍스트",
+       "cluster_nickname": "군집별명",
+       "spend_chart_json": "소비차트JSON문자열",
+       "change_analysis_report": "프로필변동분석 텍스트",
+       "profit_analysis_report": "투자분석 텍스트",
+       "trend_chart_json": "투자추이JSON문자열",
+       "fund_comparison_json": "펀드비교JSON문자열",
+       "policy_analysis_report": "정책분석 텍스트",
+       "threelines_summary": "1. ... 2. ... 3. ..."
+     }}
+   )
+
+5️⃣ 종료:
+   - save_report_document 성공 확인 후 종료
+   - Action: respond
+
+⚠️ 주의사항:
+- 즉시 도구를 호출하세요. 사용자에게 응답하지 마세요.
+- 4단계(DB 저장)를 반드시 실행하세요.
+- 모든 도구 호출 결과를 metadata에 포함하세요.
+- JSON 문자열은 반드시 문자열로 변환하세요 (json.dumps 사용).
+"""

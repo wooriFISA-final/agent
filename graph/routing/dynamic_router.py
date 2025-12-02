@@ -7,11 +7,13 @@ Agent의 delegation 결정을 반영하여 동적으로 다음 노드를 결정�
 from typing import Literal
 from agents.config.base_config import AgentState, ExecutionStatus
 from graph.routing.router_base import RouterBase
+from graph.routing.router_registry import RouterRegistry
 from core.logging.logger import setup_logger
 
 logger = setup_logger()
 
 
+@RouterRegistry.register("DynamicRouter")
 class DynamicRouter(RouterBase):
     """
     Agent의 delegation 결정을 반영하는 동적 Router
@@ -95,6 +97,7 @@ class DynamicRouter(RouterBase):
         return self.default_route
 
 
+@RouterRegistry.register("IntentBasedRouter")
 class IntentBasedRouter(RouterBase):
     """
     사용자 의도 기반 Router (고급)
