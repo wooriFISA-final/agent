@@ -110,43 +110,28 @@ class ReportAgent(AgentBase):
     # --------------------------
     def get_agent_role_prompt(self) -> str:
         return """
-당신은 월간 금융 보고서를 자동 생성하는 Report Agent입니다.
+당신은 월간 금융 보고서를 자동 생성하는 Agent입니다.
 
-반드시 아래 순서를 지켜 Tool을 호출하십시오.
-사용자에게 질문하거나 순서를 건너뛰면 안 됩니다.
-
-[필수 실행 순서]
+[실행 순서]
 1) get_report_member_details
 2) get_user_consume_data_raw (최근 2개월)
-3) get_recent_report_summary
+3) get_recent_report_summary (전월 조회)
 4) analyze_user_profile_changes_tool
 5) analyze_user_spending_tool
 6) analyze_investment_profit_tool
 7) check_and_report_policy_changes_tool
 8) save_report_document
 
-[추가 생성해야 할 항목]
-- cluster_nickname: 소비 상위 카테고리를 기반으로 창의적으로 생성
-- consume_report: 소비 분석 텍스트
-- threelines_summary: 전체 분석 3줄 요약
+[생성 항목]
+- cluster_nickname: 형용사+명사 (예: 알뜰한 미식가)
+- consume_report: 소비 분석
+- threelines_summary: 3줄 요약
 
-[DB 저장 시 포함할 metadata]
-- cluster_nickname
-- consume_report
-- consume_analysis_summary
-- spend_chart_json
-- change_analysis_report
-- change_raw_changes
-- profit_analysis_report (빈 문자열)
-- net_profit
-- profit_rate
-- trend_chart_json
-- fund_comparison_json
-- policy_analysis_report
-- policy_changes
-- threelines_summary
+[중요] save_report_document 호출 시:
+- spend_chart_json, trend_chart_json, fund_comparison_json은 Tool이 반환한 문자열을 그대로 전달
+- 절대 파싱하거나 객체로 변환하지 말 것
 
-모든 Tool 실행이 끝나면 save_report_document를 호출해 보고서를 저장하고 종료하십시오.
+순서대로 Tool을 호출하고 save_report_document로 저장 후 종료하세요.
 """
 
     # --------------------------
@@ -154,25 +139,36 @@ class ReportAgent(AgentBase):
     # --------------------------
     def get_prompt_template(self) -> str:
         return """
-📌 자동 보고서 생성 시작
+자동 보고서 생성
 
 user_id: {user_id}
 report_month_str: {report_month_str}
 
-아래 순서를 정확히 따르십시오.
-
+순서:
 1. get_report_member_details(user_id={user_id})
 2. get_user_consume_data_raw(user_id={user_id}, dates=["최근2개월"])
-3. get_recent_report_summary(member_id={user_id}, report_date_for_comparison="직전월")
+3. get_recent_report_summary(member_id={user_id}, report_date_for_comparison="전월")
+   ⚠️ 중요: {report_month_str}의 전월 리포트를 조회하세요
+   예: report_month_str="2024-08-01" → "2024-07" 조회
+
 4. analyze_user_profile_changes_tool(...)
 5. analyze_user_spending_tool(...)
 6. analyze_investment_profit_tool(user_id={user_id})
 7. check_and_report_policy_changes_tool(report_month_str={report_month_str})
 
 [중요] 5~7번 결과를 활용해:
-- cluster_nickname 생성
-- consume_report 작성
-- threelines_summary 생성
+
+**cluster_nickname 생성 (필수 형식)**
+- 반드시 "형용사 + 명사" 구조
+- 예: "알뜰한 미식가", "스마트한 투자자", "계획적인 플래너"
+- 소비 상위 카테고리를 반영하되 형식 준수
+
+**consume_report 작성**
+- 총 지출, 전월 대비 변화, Top 5 카테고리 설명
+- 소비 조언 포함
+
+**threelines_summary 생성**
+- "1. ... 2. ... 3. ..." 형식
 
 8. save_report_document 호출:
    - member_id: {user_id}
@@ -181,7 +177,7 @@ report_month_str: {report_month_str}
    - metadata: 모든 Tool 결과를 포함한 딕셔너리
 
 metadata 필수 필드:
-- cluster_nickname (문자열)
+- cluster_nickname (형용사+명사 형식)
 - consume_report (문자열)
 - consume_analysis_summary (객체)
 - spend_chart_json (문자열)
