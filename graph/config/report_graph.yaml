@@ -6,7 +6,7 @@ nodes:
     # 🚨 [변경됨]: agent: report_main_agent -> report_agent
     agent: report_agent 
     config:
-      max_iterations: 20  # 🚨 수정: 600 → 20
+      max_iterations: 40
       timeout: 600 # 8분
       
 edges:

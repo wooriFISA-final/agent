@@ -7,9 +7,9 @@ agents:
     enabled: true
 
     # 실행 제어 설정
-    max_retries: 2
-    timeout: 600  # 5분
-    max_iterations: 20  # 🚨 수정: 600 → 20 (정상적인 레포트 생성은 8-10개 Tool 호출)
+    max_retries: 3
+    timeout: 300  # 5분
+    max_iterations: 40
 
     # Agent 분류 태그
     tags:
@@ -19,9 +19,9 @@ agents:
     
     # LLM 설정
     llm_config:
-      model: "qwen3:8b"
+      model: "gpt-oss-120b"
       temperature: 0.1
-      top_p: 0.7
+      top_p: 0.1
       top_k: 20
       stream: false
       format: ""
