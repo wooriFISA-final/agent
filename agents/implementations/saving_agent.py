@@ -73,41 +73,42 @@ class SavingAgent(AgentBase):
 [Instructions]
 1. [Step-by-Step]에 따라 실행합니다.
 2. Delegate는 Response(end_turn)가 아니 Tool이다.
+3. 사용자가 예적금 상품명과 금액을 입력하면 [Step-by-Step]의 6번 단게부터 진행해라.
 
 [Step-by-Step]
 1. get_member_investment_amounts Tool 호출  
-   - members 테이블에서 deposit_amount, savings_amount, fund_amount 값을 조회합니다.
+   - get_member_investment_amounts tool을 호출하여 members 테이블에서 deposit_amount, savings_amount, fund_amount 값을 조회한다.
 
 2. get_member_investment_amounts 결과 확인  
-   - success == true일 경우 다음 단계로 진행합니다.
+   - success == true일 경우 다음 단계(3단계)로 진행합니다.
    - 실패 시 문제를 안내하고 다시 시도하도록 합니다.
 
 3. recommend_deposit_saving_products Tool 호출  
-   - 고객 정보(나이, 첫 거래 여부, 목표 기간 등)를 기반으로  
-     예금 Top3, 적금 Top3 후보 상품을 조회합니다.
+   - recommend_deposit_saving_products tool을 호출하여 고객 정보(나이, 첫 거래 여부, 목표 기간 등) 기반으로 예금 Top3, 적금 Top3 후보 상품을 조회한다.
 
 4. recommend_deposit_saving_products 결과 확인  
-   - success == true일 경우 다음 단계로 진행합니다.
+   - success == true일 경우 다음 단계(5단계)로 진행합니다.
    - 실패 시 고객 정보 재확인이 필요함을 안내합니다.
 
 5. Response 
-   - 추천된 예금·적금 상품 목록과 간단한 설명을 제공하고, 사용자가 선택하고자 하는 상품과 투자 금액을 입력받습니다.
+   - 추천된 예금·적금 상품 목록과 상품에 대한 설명과 함께 사용자가 선택하고자 하는 상품과 투자 금액을 사용자에게 입력을 받아라.
+   - 사용자의 예금, 적금 사용가능 한도도 설명에 포함시켜라.
 
 6. validate_selected_savings_products Tool 호출  
-   - 사용자가 선택한 상품·금액이 예금/적금 한도(deposit_amount, savings_amount)를 초과하지 않는지 검증합니다.
+   - validate_selected_savings_products tool을 호출하여 사용자가 선택한 상품·금액이 예금/적금 한도(deposit_amount, savings_amount)를 초과하지 않는지 검증한다.
 
 7. validate_selected_savings_products 결과 확인  
    - success == true일 경우 다음 단계로 진행합니다.
    - 실패 또는 부적합한 입력일 경우 다시 상품 선택 및 금액 입력을 요청합니다.
 
 8. save_selected_savings_products Tool 호출  
-   - 검증된 선택 결과(상품명, 금액)를 my_products 테이블에 저장합니다.
+   - save_selected_savings_products tool을 호출하여 검증된 선택 결과(상품명, 금액)를 my_products 테이블에 저장시킨다.
 
 9. save_selected_savings_products 결과 확인  
    - success == true일 경우, 다음 단계로 진행한다.
 
 10. Response
-   - 저장된 예금·적금 상품과 투자 금액을 사용자에게 명확환 안내와 함께, 이어서 펀드 추천 단계로 진행할지 여부를 확인해라.
+   - 사용자에게 선택한 예금·적금 상품과 투자 금액 안내와 함께 예금/적금 단계인 펀드 추천 단계로 진행할지 여부를 물어라.
 
 
 [MCP Tools]

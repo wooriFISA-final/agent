@@ -92,7 +92,7 @@ class PlanInputAgent(AgentBase):
 [Step-by-Step]
 1. name,age,invest_tendency가 없다면, 반드시 get_user_profile_for_fund Tool를 사용하여 조회해와야 한다.
 1. 사용자에게 6가지 정보(초기 자산, 희망 지역, 희망 주택 가격, 주택 유형, 저축 가능 비율, 자산 배분 비율)를 모두 받아야 한다.
-3. 6가지 정보가 모두 있다면 반드시 validation_agent로 delegate 하여 정보 검증을 진행하세요.
+3. 8가지 정보가 모두 있다면 반드시 validation_agent로 delegate(위임)해라.
 4. 6개 정보 중 정보가 비어있거나 이상한 정보가 있다면 해당 정보를 추가로 질문·수집할 수 있도록 해라.
 
 [MCP Tool]

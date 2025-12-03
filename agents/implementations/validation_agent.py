@@ -80,21 +80,21 @@ class ValidationAgent(AgentBase):
 
 [Step-by-Step]
 1. validate_input_data Tool을 호출하여 6개 정보를 파싱·검증·정규화해라.
-  - 입력된 6개 정보(initial_prop, hope_location, hope_price, hope_housing_type, income_usage_ratio, ratio_str)를 파싱하고, 유효성 검증을 수행하며, 정규화된 형태로 변환합니다.
+  - 입력된 6개 정보(initial_prop, hope_location, hope_price, hope_housing_type, income_usage_ratio, ratio_str)를 validate_input_data tool을 호출하여 파싱하고, 유효성 검증을 수행하며, 정규화된 형태로 변환한다.
 
 2. validate_input_data 결과 확인
   - 결과가 성공(success = true)일 경우 3단계(check_house_price)를 실행해라.
   - 결과가 실패(success = false)일 경우 부족한 정보를 사용자에게 다시 질문하도록 합니다.
 
 3. check_house_price Tool 호출
-  - 사용자의 희망 주택 가격이 해당 지역·유형의 평균 시세와 부합하는지 검사해라.
+  - check_house_price tool을 호출하여 사용자의 희망 주택 가격이 해당 지역·유형의 평균 시세와 부합하는지 검사해라.
 
 4. check_house_price 결과 확인
   - 검사(success = true)이면 5단계(upsert_member_and_plan)를 실행해라. 
   - 실패일 경우 또는 시세와 부합하지 않는 경우 사용자의 입력을 다시 받도록 한다.
   
 5. upsert_member_and_plan Tool 호출
-  - 검증·정규화된 기본 계획 값 (initial_prop, hope_location, hope_price, hope_housing_type, income_usage_ratio)을 members테이블과 plans 테이블에 저장/갱신해라.
+  - 검증·정규화된 기본 계획 값 (initial_prop, hope_location, hope_price, hope_housing_type, income_usage_ratio)을 upsert_member_and_plan tool을 호출하여 members테이블과 plans 테이블에 저장/갱신해라.
    - validate_input_data, check_house_price 성공했을 경우에만 사용가능하다.
    
 6. upsert_member_and_plan 결과 확인
@@ -102,11 +102,11 @@ class ValidationAgent(AgentBase):
   - 실패일 경우 다시 upser_member_and_plan tool을 시도해라.
   
 7. save_user_portfolio Tool 호출
-  - 정규화된 initial_prop과 ratio_str을 사용하여 예금(deposit), 적금(savings), 펀드(fund) 금액을 계산하고 저장해라.  
+  - save_user_portfolio tool을 호출하여 정규화된 initial_prop과 ratio_str을 사용하여 예금(deposit), 적금(savings), 펀드(fund) 금액을 계산하고 저장해라.  
   - 이 단계는 validate_input_data와 check_house_price가 모두 성공한 경우에만 실행합니다.
 
 8. Response
-  - 사용자 정보 입력에 대한 설명을 표와 함꼐 간단한 설명을 제공하고 해당 입력정보를 통해서 다음 단계인 대출상품을 진행할지 정보를 수정할지를 질문해라.
+  - 사용자의 정보(초기 자본, 희망 지역, 희망 주택 가격, 희망 주택 유형, 소득 대비 주택 자금 사용 비율, 이름, 나이, 투자성향)에 대한 설명을 표와 함꼐 간단한 설명을 제공하고 해당 정보를 가지고 다음 단계인 대출상품을 진행할지 정보를 수정할지를 질문해라.
      
  
 [MCP Tools]

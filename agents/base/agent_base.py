@@ -32,7 +32,7 @@ class AgentAction(Enum):
     """Agent가 취할 수 있는 행동 타입"""
     USE_TOOL = "use_tool"
     RESPOND = "respond"
-    DELEGATE = "delegate"  # ✅ 새로 추가: 다른 Agent로 위임
+    DELEGATE = "delegate"
 
 
 class AgentDecision:
@@ -44,7 +44,7 @@ class AgentDecision:
         tool_name: Optional[str] = None,
         tool_arguments: Optional[Dict] = None,
         tool_use_id: Optional[str] = None,
-        tool_calls: Optional[List[Dict]] = None,  # ✅ 추가
+        tool_calls: Optional[List[Dict]] = None,
         next_agent: Optional[str] = None,
         response_text: Optional[str] = None,
         requires_post_processing: bool = False
@@ -54,7 +54,7 @@ class AgentDecision:
         self.tool_name = tool_name
         self.tool_arguments = tool_arguments or {}
         self.tool_use_id = tool_use_id
-        self.tool_calls = tool_calls or []  # ✅ 추가
+        self.tool_calls = tool_calls or []
         self.next_agent = next_agent
         self.response_text = response_text
         self.requires_post_processing = requires_post_processing
@@ -65,7 +65,7 @@ class AgentBase(ABC):
     멀티턴 Tool 호출을 지원하는 Agent 베이스 클래스
     
     핵심 설계:
-    - LLMHelper를 통한 Ollama Chat API 직접 호출
+    - LLMHelper를 통한 Bedrock Converse API 직접 호출
     - LangChain 메시지는 LangGraph 호환을 위해 유지
     - LLM 호출 시에만 딕셔너리로 변환하여 사용
     - Agent별 LLM 설정 지원
@@ -83,15 +83,12 @@ class AgentBase(ABC):
         yaml_config = AgentConfigLoader.get_agent_config_from_current(self.name)
         
         if yaml_config:
-            # agents.yaml 설정이 있으면 우선 적용
             self.max_iterations = yaml_config.max_iterations
             self.config.max_retries = yaml_config.max_retries
             self.config.timeout = yaml_config.timeout
             self.config.tags = yaml_config.tags
             
-            # LLM 설정 병합 (agents.yaml > BaseAgentConfig > 전역 설정)
             if yaml_config.llm_config:
-                # agents.yaml의 llm_config를 우선 적용
                 merged_llm = {**config.get_llm_config_dict(), **yaml_config.llm_config}
                 self.llm_config = merged_llm
             else:
@@ -103,7 +100,6 @@ class AgentBase(ABC):
             logger.info(f"   max_iterations: {self.max_iterations}")
             logger.info(f"   tags: {self.config.tags}")
         else:
-            # agents.yaml 설정이 없으면 BaseAgentConfig 사용
             self.max_iterations = config.max_iterations
             self.llm_config = config.get_llm_config_dict()
             logger.info(f"[{self.name}] Using BaseAgentConfig defaults")
@@ -120,18 +116,14 @@ class AgentBase(ABC):
     def _langchain_to_dict(self, message) -> Dict[str, Any]:
         """LangChain 메시지를 Bedrock 딕셔너리로 변환"""
         if isinstance(message, HumanMessage):
-            # content가 리스트면 그대로, 문자열이면 text 블록으로 감싸기
             if isinstance(message.content, list):
                 return {"role": "user", "content": message.content}
             else:
                 return {"role": "user", "content": [{"text": message.content}]}
         
         elif isinstance(message, AIMessage):
-            # ✅ AIMessage의 content에서 제어 토큰 제거 (방어적 조치)
-            # LLM Manager에서 이미 제거하지만, 이중 방어
             from core.llm.llm_manger import _sanitize_extended_thinking_tokens
             
-            # content가 리스트면 각 텍스트 블록 정제
             if isinstance(message.content, list):
                 sanitized_content = []
                 for block in message.content:
@@ -143,55 +135,36 @@ class AgentBase(ABC):
                         sanitized_content.append(block)
                 return {"role": "assistant", "content": sanitized_content}
             else:
-                # 문자열이면 정제 후 text 블록으로 감싸기
                 sanitized_text = _sanitize_extended_thinking_tokens(message.content)
                 return {"role": "assistant", "content": [{"text": sanitized_text}]}
         
         elif isinstance(message, SystemMessage):
-            # Bedrock는 system을 별도로 처리하므로 user로 변환하거나 제거
             return {"role": "user", "content": [{"text": f"[System] {message.content}"}]}
         
         elif isinstance(message, ToolMessage):
-            # ToolMessage는 사용하지 않음 (HumanMessage with toolResult 사용)
             logger.warning(f"[{self.name}] ToolMessage deprecated, use HumanMessage with toolResult")
             return {"role": "user", "content": [{"text": message.content}]}
         
         else:
-            # 알 수 없는 메시지 타입에 대한 상세 로깅
             msg_type = type(message).__name__
             msg_attrs = {k: v for k, v in message.__dict__.items() if not k.startswith('_')}
             logger.warning(f"[{self.name}] ⚠️ Unknown message type: {msg_type}")
             logger.warning(f"[{self.name}]    Message attributes: {msg_attrs}")
             
-            # 메시지에 role 속성이 있으면 로그로 남기기
             if hasattr(message, 'type'):
                 logger.warning(f"[{self.name}]    Message.type: {message.type}")
             
             return {"role": "user", "content": [{"text": str(message)}]}
     
     def _convert_messages_to_dict(self, messages: List) -> List[Dict[str, str]]:
-        """메시지 리스트를 딕셔너리 리스트로 일괄 변환
-        
-        Args:
-            messages: LangChain 메시지 리스트
-            
-        Returns:
-            List[Dict[str, str]]: 변환된 딕셔너리 리스트
-        """
+        """메시지 리스트를 딕셔너리 리스트로 일괄 변환"""
         return [self._langchain_to_dict(msg) for msg in messages]
         
     # =============================
     # Message 포맷팅 및 LLM 호출 (Debug용)
     # =============================
     def _pretty_messages(self, messages: List) -> str:
-        """LangChain 메시지 리스트를 JSON 문자열로 예쁘게 변환
-        
-        Args:
-            messages: LangChain 메시지 리스트
-            
-        Returns:
-            str: JSON 형태의 문자열
-        """
+        """LangChain 메시지 리스트를 JSON 문자열로 예쁘게 변환"""
         converted = self._convert_messages_to_dict(messages)
         return json.dumps(converted, ensure_ascii=False, indent=2)
 
@@ -201,24 +174,12 @@ class AgentBase(ABC):
         stream: Optional[bool] = None,
         **kwargs
     ) -> Dict[str, Any]:
-        """LLM 호출 파라미터 준비
-        
-        Args:
-            use_agent_config: Agent 설정 사용 여부
-            stream: 스트리밍 모드
-            format: 응답 포맷
-            **kwargs: 추가 파라미터
-            
-        Returns:
-            Dict[str, Any]: 준비된 LLM 파라미터
-        """
-        # Agent 설정 사용 여부에 따라 기본값 설정
+        """LLM 호출 파라미터 준비"""
         if use_agent_config:
             llm_params = {**self.llm_config, **kwargs}
         else:
             llm_params = {**kwargs}
         
-        # stream 명시적 처리
         if stream is not None:
             llm_params["stream"] = stream
             
@@ -230,21 +191,7 @@ class AgentBase(ABC):
         stream: Optional[bool] = None,
         **kwargs
     ) -> str:
-        """LLM 호출 (동기 방식)
-        
-        우선순위:
-        1. 메서드 호출 시 전달된 kwargs
-        2. Agent별 llm_config
-        3. 전역 설정 (LLMHelper 기본값)
-        
-        Args:
-            messages: LangChain 메시지 리스트
-            stream: 스트리밍 모드
-            **kwargs: 추가 LLM 파라미터
-            
-        Returns:
-            str: LLM 응답
-        """
+        """LLM 호출 (동기 방식)"""
         llm_params = self._prepare_llm_params(
             use_agent_config=True,
             stream=stream,
@@ -253,30 +200,19 @@ class AgentBase(ABC):
         
         logger.debug(f"[{self.name}] LLM Call Parameters: {llm_params}")
         
-        # LangChain 메시지를 딕셔너리로 변환
         formatted_messages = self._convert_messages_to_dict(messages)
         
         return LLMHelper.invoke_with_history(
             history=formatted_messages,
             **llm_params
         )
-        
-
 
     # =============================
     # 상태 관리 헬퍼 메서드
     # =============================
     
     def _add_message_to_state(self, state: AgentState, message) -> AgentState:
-        """상태에 메시지를 추가하고 global_messages 업데이트
-        
-        Args:
-            state: 현재 상태
-            message: 추가할 LangChain 메시지
-            
-        Returns:
-            AgentState: 업데이트된 상태
-        """
+        """상태에 메시지를 추가하고 global_messages 업데이트"""
         global_messages = state.get("global_messages", [])
         global_messages.append(message)
         state["global_messages"] = global_messages
@@ -296,7 +232,6 @@ class AgentBase(ABC):
             state = StateBuilder.finalize_state(state, ExecutionStatus.FAILED)
             return state
         
-        # Agent 진입 시 iteration 초기화
         state["iteration"] = 0
         logger.info(f"[{self.name}] Iteration reset to 0 for this agent")
 
@@ -340,23 +275,12 @@ class AgentBase(ABC):
     async def execute_multi_turn(self, state: AgentState) -> AgentState:
         """멀티턴 실행 플로우 - global_messages 사용"""
         
-        # RESPONDING 상태로 재진입한 경우 처리
         if state.get("status") == ExecutionStatus.RESPONDING:
             logger.info(f"[{self.name}] ⚙️ Re-entered for post-processing (status: RESPONDING)")
-            
-            # requires_post_processing 플래그 제거
             state.pop("requires_post_processing", None)
-            
-            # 상태를 SUCCESS로 변경하여 종료 준비
-            # 주의: 여기서는 상태만 RUNNING으로 변경하고, 실제 Tool 호출은 LLM에게 맡김
             state["status"] = ExecutionStatus.RUNNING
             logger.info(f"[{self.name}] Status changed to RUNNING for post-processing")
-            
-            # 후처리 Tool을 호출하도록 LLM에게 지시
-            # Agent는 이제 필요한 MCP Tool(예: save_to_db)을 호출하고,
-            # 완료 후 respond_final로 종료해야 함
         
-        # global_messages 사용 (없으면 messages로 폴백)
         global_messages = state.get("global_messages", [])
         if not global_messages:
             global_messages = state.get("messages", [])
@@ -364,31 +288,25 @@ class AgentBase(ABC):
         
         logger.info(f"[{self.name}] Global messages count: {len(global_messages)}")
         
-        # 현재 에이전트의 역할을 SystemMessage로 맨 앞에 추가
         agent_role = self.get_agent_role_prompt()
         system_msg = SystemMessage(content=agent_role)
         
-        # 맨 앞에 SystemMessage 삽입
         global_messages = [system_msg] + global_messages
         state["global_messages"] = global_messages
         
         logger.info(f"[{self.name}] ✅ Added agent role as SystemMessage at the beginning")
         
-        # MCP 도구 목록 조회
         available_tools = await self._list_mcp_tools()
         logger.info(f"[{self.name}] MCP tools available: {len(available_tools)}")
                 
-        # Bedrock toolConfig로 변환
         bedrock_tool_config = self._convert_mcp_to_bedrock_toolspec(available_tools)
         if bedrock_tool_config:
             state["bedrock_tool_config"] = bedrock_tool_config
             logger.info(f"[{self.name}] ✅ Bedrock toolConfig created with {len(bedrock_tool_config['tools'])} tools")
-            # 🛠️ 모든 tool 이름을 추출 (MCP + respond_intermediate + delegate)
             tool_names = [t["toolSpec"]["name"] for t in bedrock_tool_config["tools"]]
         else:
             logger.warning(f"[{self.name}] ⚠️ No Bedrock toolConfig created")
             tool_names = []
-
         
         # ReAct Loop
         while not StateBuilder.is_max_iterations_reached(state):
@@ -399,16 +317,19 @@ class AgentBase(ABC):
             logger.info(f"[{self.name}] Iteration {current_iteration}/{self.max_iterations}")
             logger.info(f"{'='*60}")
             
-            # global_messages를 사용
             global_messages = state.get("global_messages", [])
             
-            # Bedrock native tool calling: 1단계로 통합
-            # _analyze_request 제거 → _make_decision에서 stopReason으로 판단
+            # ✅ 메시지 구조 검증 추가
+            if not self._validate_message_structure(global_messages):
+                logger.error(f"[{self.name}] ❌ Message structure validation failed")
+                # 메시지 정규화 시도
+                global_messages = self._normalize_messages(global_messages)
+                state["global_messages"] = global_messages
+                logger.info(f"[{self.name}] ✅ Messages normalized")
+            
             try:
-                # logger.info("🤔 Making Decision (Bedrock native tool calling)\n" + self._pretty_messages(global_messages))
                 logger.info("🤔 Making Decision (Bedrock native tool calling)\n")
                 
-                # ✅ 기존에 추출한 tool_names (MCP + delegate + respond_intermediate) 사용
                 decision = await self._make_decision(state, global_messages, tool_names)
                 
                 logger.info(f"🤔 Decision: {decision.action.value}")
@@ -416,11 +337,9 @@ class AgentBase(ABC):
                 
             except Exception as e:
                 logger.error(f"[{self.name}] Decision making failed: {e}")
-
                 state = StateBuilder.add_error(state, e, self.name)
                 break
             
-            # Step 3: 액션 실행
             if decision.action == AgentAction.USE_TOOL:
                 state = await self._execute_tool_action(state, decision)
                 continue
@@ -431,7 +350,6 @@ class AgentBase(ABC):
             elif decision.action == AgentAction.RESPOND:
                 return await self._execute_respond_action(state, global_messages, available_tools, decision)
         
-        # 최대 반복 횟수 도달
         return await self._handle_max_iterations(state, global_messages)
     
     # =============================
@@ -443,9 +361,8 @@ class AgentBase(ABC):
         state: AgentState,
         decision: AgentDecision
     ) -> AgentState:
-        """Tool 실행 액션 처리 - 여러 tool이 있으면 첫 번째만 실행"""
+        """Tool 실행 액션 처리 - 첫 번째만 실행하고 나머지는 메시지에서 제거"""
         
-        # ✅ 여러 tool이 있으면 모두 가져오기
         tool_calls = decision.tool_calls if decision.tool_calls else [{
             "name": decision.tool_name,
             "arguments": decision.tool_arguments,
@@ -455,7 +372,6 @@ class AgentBase(ABC):
         total_tools = len(tool_calls)
         logger.info(f"🔧 Total {total_tools} tool(s) requested")
         
-        # ✅ 첫 번째 tool만 실행
         first_tool = tool_calls[0]
         logger.info(f"🔧 Executing tool 1/{total_tools}: {first_tool['name']}")
         logger.info(f"   Arguments: {first_tool['arguments']}")
@@ -476,14 +392,12 @@ class AgentBase(ABC):
                 result=tool_result
             )
             
-            # JSON 직렬화
             import json
             if isinstance(tool_result, dict):
                 result_content = json.dumps(tool_result, ensure_ascii=False)
             else:
                 result_content = str(tool_result)
             
-            # ✅ 첫 번째 tool의 실제 결과 추가
             tool_results.append({
                 "toolResult": {
                     "toolUseId": first_tool["tool_use_id"],
@@ -497,7 +411,6 @@ class AgentBase(ABC):
             logger.error(f"[{self.name}] Tool execution failed: {e}")
             state = StateBuilder.add_error(state, e, self.name)
             
-            # ✅ 에러 응답
             tool_results.append({
                 "toolResult": {
                     "toolUseId": first_tool["tool_use_id"],
@@ -506,32 +419,37 @@ class AgentBase(ABC):
                 }
             })
         
-        # ✅ 나머지 tool들에 대해 "아직 실행 안 함" 응답 생성
+        # ✅ 나머지 tool은 assistant 메시지에서 제거 (재구성)
         if total_tools > 1:
-            logger.info(f"⏳ Deferring remaining {total_tools - 1} tool(s) to next iteration")
+            logger.warning(f"⚠️ Removing {total_tools - 1} unused tool(s) from message history")
             
-            for i, tool in enumerate(tool_calls[1:], start=2):
-                logger.info(f"   Tool {i}/{total_tools}: {tool['name']} (deferred)")
+            global_messages = state.get("global_messages", [])
+            if global_messages and isinstance(global_messages[-1].content, list):
+                last_msg = global_messages[-1]
                 
-                tool_results.append({
-                    "toolResult": {
-                        "toolUseId": tool["tool_use_id"],
-                        "content": [{
-                            "text": json.dumps({
-                                "status": "deferred",
-                                "message": f"이 도구는 아직 실행되지 않았습니다. 이전 도구({first_tool['name']})의 결과를 먼저 확인하세요.",
-                                "tool_name": tool["name"],
-                                "pending_arguments": tool["arguments"]
-                            }, ensure_ascii=False)
-                        }]
-                    }
-                })
+                # 첫 번째 toolUse만 남기기
+                new_content = []
+                tool_count = 0
+                for block in last_msg.content:
+                    if isinstance(block, dict) and "toolUse" in block:
+                        tool_count += 1
+                        if tool_count == 1:
+                            new_content.append(block)
+                    else:
+                        new_content.append(block)
+                
+                # 메시지 업데이트
+                last_msg.content = new_content
+                global_messages[-1] = last_msg
+                state["global_messages"] = global_messages
+                
+                logger.info(f"   Kept first toolUse, removed {total_tools - 1} toolUse block(s)")
         
-        # ✅ 모든 toolResult를 하나의 User 메시지로 추가
+        # ✅ 첫 번째 tool의 결과만 추가
         tool_result_message = HumanMessage(content=tool_results)
         state = self._add_message_to_state(state, tool_result_message)
         
-        logger.info(f"✅ Tool execution completed: 1 executed, {total_tools - 1} deferred")
+        logger.info(f"✅ Tool execution completed: 1 executed, {total_tools - 1} removed")
         
         return state
     
@@ -540,17 +458,27 @@ class AgentBase(ABC):
         state: AgentState,
         decision: AgentDecision
     ) -> AgentState:
-        """Delegate 액션 처리
-        
-        Args:
-            state: 현재 상태
-            decision: Agent 의사결정 결과
-            
-        Returns:
-            AgentState: 업데이트된 상태
-        """
+        """Delegate 액션 처리 - toolResult 추가"""
         logger.info(f"🔀 Delegating to agent: {decision.next_agent}")
         logger.info(f"   Reason: {decision.reasoning}")
+        
+        # ✅ delegate toolResult 추가 (Bedrock API 요구사항)
+        tool_result = {
+            "toolResult": {
+                "toolUseId": decision.tool_use_id,
+                "content": [{
+                    "text": json.dumps({
+                        "status": "delegated",
+                        "next_agent": decision.next_agent,
+                        "reason": decision.reasoning
+                    }, ensure_ascii=False)
+                }]
+            }
+        }
+        
+        # global_messages에 toolResult 추가
+        tool_result_message = HumanMessage(content=[tool_result])
+        state = self._add_message_to_state(state, tool_result_message)
         
         # delegation 메타데이터 설정
         state["previous_agent"] = self.name
@@ -564,7 +492,7 @@ class AgentBase(ABC):
         logger.info(f"[{self.name}] ✅ Full conversation history preserved ({len(global_messages)} messages)")
         
         return state
-    
+
     async def _execute_respond_action(
         self,
         state: AgentState,
@@ -572,31 +500,35 @@ class AgentBase(ABC):
         available_tools: List[str],
         decision: AgentDecision
     ) -> AgentState:
-        """Respond 액션 처리
-        
-        Args:
-            state: 현재 상태
-            global_messages: 전역 메시지 리스트
-            available_tools: 사용 가능한 도구 목록
-            decision: Agent 의사결정 결과
-            
-        Returns:
-            AgentState: 업데이트된 상태
-        """
+        """Respond 액션 처리"""
         logger.info("✅ Processing response action")
         
         try:
-            # 후처리 필요 여부에 따라 상태 분기
             if decision.requires_post_processing:
-                # 중간 단계: 응답 저장하지 않고 RESPONDING 상태로 설정
-                # (사용자에게 보여주지 않음)
+                # ✅ respond_intermediate toolResult 추가
+                tool_result = {
+                    "toolResult": {
+                        "toolUseId": decision.tool_use_id,
+                        "content": [{
+                            "text": json.dumps({
+                                "status": "intermediate",
+                                "reason": decision.reasoning,
+                                "message": "중간 단계 - 추가 작업 필요"
+                            }, ensure_ascii=False)
+                        }]
+                    }
+                }
+                
+                # global_messages에 toolResult 추가
+                tool_result_message = HumanMessage(content=[tool_result])
+                state = self._add_message_to_state(state, tool_result_message)
+                
                 state["status"] = ExecutionStatus.RESPONDING
                 state["requires_post_processing"] = True
-                logger.info(f"[{self.name}] ⚙️ Intermediate stage - RESPONDING (no response saved)")
+                logger.info(f"[{self.name}] ⚙️ Intermediate stage - RESPONDING (toolResult added)")
                 logger.info(f"[{self.name}] Router will re-enter this agent for post-processing")
                 logger.info(f"[{self.name}] Reason: {decision.reasoning}")
             else:
-                # 최종 응답: end_turn을 통한 응답
                 final_response = decision.response_text
                 
                 if not final_response:
@@ -607,10 +539,17 @@ class AgentBase(ABC):
                 
                 state["last_result"] = final_response
                 
-                # 응답을 global_messages에 추가
                 state = self._add_message_to_state(state, AIMessage(content=final_response))
                 
-                # 최종 응답: SUCCESS로 종료
+                usage = state.get("usage", {})
+                total_tokens = usage.get("totalTokens", 0)
+                
+                if total_tokens > 50000:
+                    logger.warning(f"⚠️ Token limit approaching: {total_tokens}/128000 - Compressing history...")
+                    state = await self._compress_conversation_history(state)
+                else:
+                    logger.info(f"📊 Token usage OK: {total_tokens}/128000")
+                
                 state = StateBuilder.finalize_state(state, ExecutionStatus.SUCCESS)
                 logger.info(f"[{self.name}] ✅ Final response saved and finalized with SUCCESS")
             
@@ -629,15 +568,7 @@ class AgentBase(ABC):
         state: AgentState,
         global_messages: List
     ) -> AgentState:
-        """최대 반복 횟수 도달 시 처리
-        
-        Args:
-            state: 현재 상태
-            global_messages: 전역 메시지 리스트
-            
-        Returns:
-            AgentState: 업데이트된 상태
-        """
+        """최대 반복 횟수 도달 시 처리"""
         logger.warning(f"⚠️ Max iterations ({self.max_iterations}) reached")
         
         try:
@@ -651,7 +582,6 @@ class AgentBase(ABC):
         state = StateBuilder.finalize_state(state, ExecutionStatus.MAX_ITERATIONS)
         return state
 
-
     # =============================
     # Agent React Function 단계별 메서드
     # =============================
@@ -661,10 +591,9 @@ class AgentBase(ABC):
         messages: List,
         available_tools: List[str],
     ) -> AgentDecision:
-        available_agents = self._get_available_agents()
+        available_agents = self._get_available_agents_list()
         user_id = state.get("user_id", "test_user_1")
         
-        # ✅ Tool 이름을 bullet list로 포맷팅
         if available_tools:
             tools_formatted = "\n".join([f"     - {tool}" for tool in available_tools])
         else:
@@ -703,6 +632,10 @@ class AgentBase(ABC):
             stop_reason = response.get("stopReason")
             logger.info(f"[{self.name}] stopReason: {stop_reason}")
             
+            usage = response.get("usage", {})
+            state["usage"] = usage
+            logger.info(f"📊 Token usage - Input: {usage.get('inputTokens', 0)}, Output: {usage.get('outputTokens', 0)}, Total: {usage.get('totalTokens', 0)}")
+            
             # end_turn 처리
             if stop_reason == "end_turn":
                 message = response.get("output", {}).get("message", {})
@@ -716,7 +649,6 @@ class AgentBase(ABC):
                 
                 logger.info(f"[{self.name}] ✅ Final response via end_turn")
                 
-                # ✅ Assistant 응답 추가
                 messages.append(AIMessage(content=response_text))
                 state["global_messages"] = messages
                 
@@ -731,7 +663,6 @@ class AgentBase(ABC):
                 logger.error(f"[{self.name}] Unexpected stopReason: {stop_reason}")
                 raise Exception(f"Unexpected stopReason: '{stop_reason}'")
             
-            # ✅ Assistant 메시지 전체를 히스토리에 추가
             message = response["output"]["message"]
             content = message.get("content", [])
 
@@ -741,25 +672,24 @@ class AgentBase(ABC):
                 if not isinstance(block, dict) or "reasoningContent" not in block
             ]
             
+            # ✅ 빈 경우 빈 텍스트 블록 추가 (원본 복원 금지)
             if not filtered_content:
-                filtered_content = content
+                logger.warning(f"[{self.name}] ⚠️ All content filtered out, adding empty text block")
+                filtered_content = [{"text": ""}]
 
-            # ✅ toolUse.name을 sanitize (Bedrock 정규식: [a-zA-Z0-9_-]+)
+            # ✅ toolUse.name sanitize
             for block in filtered_content:
                 if isinstance(block, dict) and "toolUse" in block:
                     tool_use = block["toolUse"]
                     tool_name_raw = tool_use.get("name", "")
                     
-                    # 공백, 특수문자 제거
                     tool_name_clean = tool_name_raw.split('<')[0].split('|')[0].strip()
-                    # 추가 정규식 검증: 허용되지 않는 문자 제거
                     tool_name_clean = re.sub(r'[^a-zA-Z0-9_-]', '', tool_name_clean)
                     
                     if tool_name_clean != tool_name_raw:
                         logger.warning(f"[{self.name}] ⚠️ Sanitized toolUse.name in message: '{tool_name_raw}' → '{tool_name_clean}'")
                         tool_use["name"] = tool_name_clean
 
-            # ✅ 필터링된 content로 AIMessage 생성하여 추가
             messages.append(AIMessage(content=filtered_content))
             state["global_messages"] = messages
             
@@ -789,7 +719,6 @@ class AgentBase(ABC):
             
             logger.info(f"[{self.name}] Found {len(tool_calls)} tool call(s)")
             
-            # ✅ 첫 번째 tool로 기본 정보 설정
             first_tool = tool_calls[0]
             
             logger.info(f"[{self.name}] 🔧 Primary tool: {first_tool['name']}")
@@ -806,7 +735,7 @@ class AgentBase(ABC):
                     response_text="",
                     requires_post_processing=True,
                     tool_use_id=first_tool["tool_use_id"],
-                    tool_calls=tool_calls  # ✅ 모든 tool 전달
+                    tool_calls=tool_calls
                 )
             
             # delegate
@@ -821,7 +750,7 @@ class AgentBase(ABC):
                     reasoning=reason,
                     next_agent=agent_name,
                     tool_use_id=first_tool["tool_use_id"],
-                    tool_calls=tool_calls  # ✅ 모든 tool 전달
+                    tool_calls=tool_calls
                 )
             
             # 일반 MCP Tool
@@ -832,7 +761,7 @@ class AgentBase(ABC):
                     tool_name=first_tool["name"],
                     tool_arguments=first_tool["arguments"],
                     tool_use_id=first_tool["tool_use_id"],
-                    tool_calls=tool_calls  # ✅ 모든 tool 전달
+                    tool_calls=tool_calls
                 )
                 
         except Exception as e:
@@ -840,18 +769,370 @@ class AgentBase(ABC):
             raise
         
     async def _generate_fallback_response(self, messages: List) -> str:
-        """최대 반복 횟수 도달 시 폴백 응답 생성
-        
-        Args:
-            messages: LangChain 메시지 리스트
-            
-        Returns:
-            str: 폴백 응답 텍스트
-        """
+        """최대 반복 횟수 도달 시 폴백 응답 생성"""
         return f"""처리 과정이 예상보다 복잡하여 {self.max_iterations}회 반복 제한에 도달했습니다.
 지금까지 수집한 정보를 바탕으로 답변드리겠습니다.
 
 추가로 필요한 정보가 있다면 질문을 더 구체적으로 다시 해주시면 감사하겠습니다."""
+
+    async def _compress_conversation_history(self, state: AgentState) -> AgentState:
+        """대화 히스토리 자동 압축 - toolUse/toolResult 쌍 보존"""
+        messages = state.get("global_messages", [])
+        
+        if len(messages) <= 12:
+            logger.info(f"[{self.name}] History short enough ({len(messages)} messages), skipping compression")
+            return state
+        
+        logger.info(f"[{self.name}] 🗜️ Compressing conversation history...")
+        logger.info(f"   Before: {len(messages)} messages")
+        
+        try:
+            compressed_messages = self._compress_history_safely(messages)
+            state["global_messages"] = compressed_messages
+            
+            logger.info(f"   After: {len(compressed_messages)} messages")
+            logger.info(f"[{self.name}] ✅ History compressed successfully")
+            
+        except Exception as e:
+            logger.error(f"[{self.name}] ❌ History compression failed: {e}")
+        
+        return state
+    
+    def _compress_history_safely(self, messages: List) -> List:
+        """히스토리 압축 - toolUse/toolResult 쌍 보존"""
+        if len(messages) <= 12:
+            return messages
+        
+        compressed = []
+        i = 0
+        
+        # 첫 메시지 보존
+        compressed.append(messages[0])
+        i = 1
+        
+        # 중간 부분 요약 (쌍을 유지하면서)
+        middle_end = len(messages) - 10
+        pairs_to_summarize = []
+        
+        while i < middle_end:
+            msg = messages[i]
+            
+            # assistant + user (toolUse/toolResult) 쌍 감지
+            if (isinstance(msg, AIMessage) and 
+                i + 1 < len(messages) and
+                isinstance(messages[i + 1], HumanMessage)):
+                
+                # toolUse 확인
+                has_tool_use = any(
+                    isinstance(block, dict) and "toolUse" in block
+                    for block in (msg.content if isinstance(msg.content, list) else [])
+                )
+                
+                if has_tool_use:
+                    # 쌍으로 요약 대상에 추가
+                    pairs_to_summarize.append((msg, messages[i + 1]))
+                    i += 2
+                    continue
+            
+            pairs_to_summarize.append((msg,))
+            i += 1
+        
+        # 요약 생성
+        summary_text = self._summarize_message_pairs(pairs_to_summarize)
+        compressed.append(SystemMessage(content=f"[이전 대화 요약]\n{summary_text}"))
+        
+        # 최근 10개 보존
+        compressed.extend(messages[-10:])
+        
+        return compressed
+    
+    def _summarize_message_pairs(self, pairs: List) -> str:
+        """메시지 쌍 요약"""
+        if not pairs:
+            return "이전 대화 내용 없음"
+        
+        conversation_parts = []
+        for pair in pairs:
+            if len(pair) == 2:
+                # toolUse/toolResult 쌍
+                ai_msg, user_msg = pair
+                conversation_parts.append(f"Tool 호출: {self._extract_tool_names(ai_msg)}")
+            else:
+                # 단일 메시지
+                msg = pair[0]
+                msg_type = msg.__class__.__name__
+                content = str(msg.content)[:200] if not isinstance(msg.content, list) else "[구조화된 메시지]"
+                conversation_parts.append(f"{msg_type}: {content}...")
+        
+        return "\n".join(conversation_parts[:20])  # 최대 20개만
+    
+    def _extract_tool_names(self, ai_message: AIMessage) -> str:
+        """AIMessage에서 tool 이름 추출"""
+        if not isinstance(ai_message.content, list):
+            return "unknown"
+        
+        tool_names = []
+        for block in ai_message.content:
+            if isinstance(block, dict) and "toolUse" in block:
+                tool_names.append(block["toolUse"].get("name", "unknown"))
+        
+        return ", ".join(tool_names) if tool_names else "unknown"
+    
+    async def _summarize_messages(self, messages: List) -> str:
+        """메시지 목록을 LLM으로 요약"""
+        if not messages:
+            return "이전 대화 내용 없음"
+        
+        conversation_parts = []
+        for msg in messages:
+            msg_type = msg.__class__.__name__
+            content = str(msg.content)
+            
+            if isinstance(msg.content, list):
+                text_parts = []
+                for block in msg.content:
+                    if isinstance(block, dict):
+                        if "text" in block:
+                            text_parts.append(block["text"][:200])
+                        elif "toolUse" in block:
+                            tool_name = block["toolUse"].get("name", "unknown")
+                            text_parts.append(f"[Tool: {tool_name}]")
+                        elif "toolResult" in block:
+                            text_parts.append("[Tool Result]")
+                content = " ".join(text_parts)
+            else:
+                content = content[:200]
+            
+            conversation_parts.append(f"{msg_type}: {content}...")
+        
+        conversation_text = "\n".join(conversation_parts)
+        
+        prompt = f"""다음은 사용자와 AI 에이전트 간의 대화 내용입니다. 핵심 정보만 간결하게 요약해주세요.
+
+{conversation_text}
+
+요약 시 반드시 포함할 내용:
+- 사용자가 요청한 주요 정보나 작업, 사용자가 선택한 상품 정보, 금액 등
+- 에이전트가 수행한 주요 작업 (Tool 호출, 계산 등)
+- 중요한 숫자나 데이터, 사용자 정보 (금액, 비율, 상품명 등)
+- 현재까지의 진행 상황
+
+300자 이내로 간결하게 요약:"""
+        
+        try:
+            from core.llm.llm_manger import LLMHelper
+            summary = await asyncio.to_thread(
+                LLMHelper.invoke,
+                prompt=prompt,
+                max_tokens=800,
+                temperature=0.3
+            )
+            
+            return summary.strip()
+            
+        except Exception as e:
+            logger.error(f"[{self.name}] ❌ Summarization failed: {e}")
+            return f"이전 대화: {len(messages)}개 메시지 (사용자 요청 및 에이전트 응답 포함)"
+
+    def _validate_message_structure(self, messages: List) -> bool:
+        """메시지 구조 검증 - toolUse/toolResult 쌍 확인"""
+        for i in range(len(messages) - 1):
+            if not isinstance(messages[i], AIMessage):
+                continue
+            
+            content = messages[i].content
+            if not isinstance(content, list):
+                continue
+            
+            # toolUse 개수 확인
+            tool_uses = [
+                block for block in content
+                if isinstance(block, dict) and "toolUse" in block
+            ]
+            
+            if not tool_uses:
+                continue
+            
+            # 다음 메시지가 user인지 확인
+            if i + 1 >= len(messages) or not isinstance(messages[i + 1], HumanMessage):
+                logger.error(f"⚠️ toolUse without following user message at index {i}")
+                return False
+            
+            # toolResult 개수 확인
+            next_content = messages[i + 1].content
+            if not isinstance(next_content, list):
+                logger.error(f"⚠️ Invalid user message content at index {i + 1}")
+                return False
+            
+            tool_results = [
+                block for block in next_content
+                if isinstance(block, dict) and "toolResult" in block
+            ]
+            
+            if len(tool_uses) != len(tool_results):
+                logger.error(
+                    f"⚠️ Mismatch at index {i}: "
+                    f"{len(tool_uses)} toolUse vs {len(tool_results)} toolResult"
+                )
+                return False
+        
+        return True
+    
+    def _normalize_messages(self, messages: List) -> List:
+        normalized = []
+        i = 0
+        
+        while i < len(messages):
+            msg = messages[i]
+            
+            # SystemMessage와 HumanMessage(일반)는 그대로 추가
+            if isinstance(msg, SystemMessage):
+                normalized.append(msg)
+                i += 1
+                continue
+            
+            if isinstance(msg, HumanMessage):
+                # toolResult가 없는 일반 HumanMessage
+                if not isinstance(msg.content, list):
+                    normalized.append(msg)
+                    i += 1
+                    continue
+                
+                # toolResult 확인
+                has_tool_result = any(
+                    isinstance(block, dict) and "toolResult" in block
+                    for block in msg.content
+                )
+                
+                if not has_tool_result:
+                    normalized.append(msg)
+                    i += 1
+                    continue
+                
+                # toolResult가 있는데 이전 메시지가 없거나 AIMessage가 아님
+                if not normalized or not isinstance(normalized[-1], AIMessage):
+                    logger.warning(f"⚠️ Orphaned toolResult at index {i} - removing")
+                    i += 1
+                    continue
+                
+                # 이전 AIMessage의 toolUse 확인
+                prev_ai = normalized[-1]
+                if not isinstance(prev_ai.content, list):
+                    # 이전 AIMessage에 toolUse가 없음 - toolResult 제거
+                    logger.warning(f"⚠️ toolResult without toolUse at index {i} - removing")
+                    i += 1
+                    continue
+                
+                tool_uses = [
+                    block for block in prev_ai.content
+                    if isinstance(block, dict) and "toolUse" in block
+                ]
+                
+                if not tool_uses:
+                    # 이전 AIMessage에 toolUse가 없음 - toolResult 제거
+                    logger.warning(f"⚠️ toolResult without toolUse at index {i} - removing")
+                    i += 1
+                    continue
+                
+                # toolResult 개수 확인 및 조정
+                tool_results = [
+                    block for block in msg.content
+                    if isinstance(block, dict) and "toolResult" in block
+                ]
+                
+                if len(tool_uses) == len(tool_results):
+                    # 정상 - 그대로 추가
+                    normalized.append(msg)
+                else:
+                    # 불일치 - 조정
+                    logger.warning(
+                        f"⚠️ Adjusting toolResult count at index {i}: "
+                        f"{len(tool_uses)} toolUse vs {len(tool_results)} toolResult"
+                    )
+                    
+                    # toolUse 개수만큼 toolResult 유지
+                    adjusted_results = tool_results[:len(tool_uses)]
+                    
+                    # 부족하면 빈 결과 추가
+                    while len(adjusted_results) < len(tool_uses):
+                        adjusted_results.append({
+                            "toolResult": {
+                                "toolUseId": tool_uses[len(adjusted_results)]["toolUse"]["toolUseId"],
+                                "content": [{"text": "Normalized: Missing result"}]
+                            }
+                        })
+                    
+                    normalized.append(HumanMessage(content=adjusted_results))
+                
+                i += 1
+                continue
+            
+            # AIMessage with toolUse 처리
+            if isinstance(msg, AIMessage) and isinstance(msg.content, list):
+                tool_uses = [
+                    block for block in msg.content
+                    if isinstance(block, dict) and "toolUse" in block
+                ]
+                
+                if tool_uses:
+                    # 다음 메시지 확인
+                    if i + 1 < len(messages) and isinstance(messages[i + 1], HumanMessage):
+                        next_content = messages[i + 1].content
+                        
+                        if isinstance(next_content, list):
+                            tool_results = [
+                                block for block in next_content
+                                if isinstance(block, dict) and "toolResult" in block
+                            ]
+                            
+                            # 쌍이 일치하면 그대로 추가
+                            if len(tool_uses) == len(tool_results):
+                                normalized.append(msg)
+                                normalized.append(messages[i + 1])
+                                i += 2
+                                continue
+                            else:
+                                # 불일치 - toolUse 개수만큼 toolResult 조정
+                                logger.warning(
+                                    f"⚠️ Normalizing mismatch at index {i}: "
+                                    f"{len(tool_uses)} toolUse vs {len(tool_results)} toolResult"
+                                )
+                                
+                                # toolUse 개수만큼 toolResult 유지
+                                adjusted_results = tool_results[:len(tool_uses)]
+                                
+                                # 부족하면 빈 결과 추가
+                                while len(adjusted_results) < len(tool_uses):
+                                    adjusted_results.append({
+                                        "toolResult": {
+                                            "toolUseId": tool_uses[len(adjusted_results)]["toolUse"]["toolUseId"],
+                                            "content": [{"text": "Normalized: Missing result"}]
+                                        }
+                                    })
+                                
+                                normalized.append(msg)
+                                normalized.append(HumanMessage(content=adjusted_results))
+                                i += 2
+                                continue
+                    else:
+                        # 다음 메시지가 없거나 HumanMessage가 아님 - toolUse 제거
+                        logger.warning(f"⚠️ Removing orphaned toolUse at index {i}")
+                        msg_copy = AIMessage(content=[
+                            block for block in msg.content
+                            if not (isinstance(block, dict) and "toolUse" in block)
+                        ])
+                        
+                        if msg_copy.content:
+                            normalized.append(msg_copy)
+                        
+                        i += 1
+                        continue
+            
+            # 일반 AIMessage (toolUse 없음)는 그대로 추가
+            normalized.append(msg)
+            i += 1
+        
+        return normalized
 
     # =============================
     # 구체적인 Agent가 구현해야 할 메서드
@@ -859,13 +1140,7 @@ class AgentBase(ABC):
     
     @abstractmethod
     def get_agent_role_prompt(self) -> str:
-        """Agent 역할 정의 Prompt 반환
-        
-        각 Agent는 이 메서드를 구현하여 자신의 역할을 정의해야 합니다.
-        
-        Returns:
-            str: Agent의 역할을 설명하는 프롬프트 텍스트
-        """
+        """Agent 역할 정의 Prompt 반환"""
         pass
 
     # =============================
@@ -873,20 +1148,10 @@ class AgentBase(ABC):
     # =============================
     
     def _get_available_agents(self) -> str:
-        """현재 Agent에서 위임 가능한 다른 Agent 목록 반환
-        
-        allowed_agents 속성이 있으면 해당 목록을 사용하고,
-        없으면 등록된 모든 Agent를 사용합니다.
-        자기 자신은 항상 목록에서 제외됩니다.
-        
-        Returns:
-            str: 위임 가능한 Agent 목록을 포함하는 포맷팅된 텍스트
-        """
+        """현재 Agent에서 위임 가능한 다른 Agent 목록 반환"""
         if hasattr(self, "allowed_agents"):
-            # allowed_agents가 있어도 자기 자신은 무조건 제외해야 함
             agents = [name for name in self.allowed_agents if name != self.name]
         else:
-            # 기본: 모든 등록된 Agent (자신 제외)
             from agents.registry.agent_registry import AgentRegistry
             all_agents = AgentRegistry.list_agents()
             agents = [name for name in all_agents if name != self.name]
@@ -899,7 +1164,6 @@ class AgentBase(ABC):
 **당신의 정체성: {self.name}**
 **위임 불가: 자기 자신({self.name})에게는 절대 위임할 수 없습니다.**"""
         
-        # 포맷팅
         agent_list = "\n".join([f"- {agent}" for agent in agents])
         
         return f"""
@@ -911,13 +1175,7 @@ class AgentBase(ABC):
 """
     
     def _get_available_agents_list(self) -> List[str]:
-        """현재 Agent에서 위임 가능한 다른 Agent 목록을 리스트로 반환
-        
-        Bedrock toolSpec의 enum에 사용하기 위한 헬퍼 메서드
-        
-        Returns:
-            List[str]: 위임 가능한 Agent 이름 리스트
-        """
+        """현재 Agent에서 위임 가능한 다른 Agent 목록을 리스트로 반환"""
         if hasattr(self, "allowed_agents"):
             agents = [name for name in self.allowed_agents if name != self.name]
         else:
@@ -928,25 +1186,16 @@ class AgentBase(ABC):
         return agents
     
     async def _list_mcp_tools(self) -> List[Dict[str, Any]]:
-        """MCP 도구 목록 조회 및 필터링
-        
-        allowed_tools 속성을 확인하여 허용된 도구만 반환합니다.
-        - 'ALL': 모든 도구 허용
-        - []: 도구 없음
-        - [도구명 목록]: 해당 도구만 허용
-        
-        Returns:
-            List[Dict[str, Any]]: 도구 명세 리스트 (function call 형식)
-        """
+        """MCP 도구 목록 조회 및 필터링"""
         try:
             tools = await self.mcp.list_tools()
             tools_spec = []
             
             if hasattr(self, "allowed_tools"):
                 if self.allowed_tools == 'ALL':
-                    pass  # 전체 툴 허용
+                    pass
                 elif len(self.allowed_tools) == 0:
-                    tools = []  # 툴 없음
+                    tools = []
                 else:
                     tools = [t for t in tools if t.name in self.allowed_tools]
 
@@ -981,46 +1230,10 @@ class AgentBase(ABC):
         self,
         mcp_tools: List[Dict[str, Any]]
     ) -> Optional[Dict]:
-        """
-        MCP tool spec을 Bedrock toolConfig 형식으로 변환하고,
-        respond_intermediate, delegate_to_agent Tool 추가
-        
-        MCP는 OpenAI function call 형식:
-        {
-            "type": "function",
-            "function": {
-                "name": "get_user",
-                "description": "...",
-                "parameters": {
-                    "type": "object",
-                    "properties": {...},
-                    "required": [...]
-                }
-            }
-        }
-        
-        Bedrock는 toolSpec 형식:
-        {
-            "tools": [
-                {
-                    "toolSpec": {
-                        "name": "get_user",
-                        "description": "...",
-                        "inputSchema": {
-                            "json": {...}  # MCP parameters 그대로
-                        }
-                    }
-                }
-            ]
-        }
-        
-        Args:
-            mcp_tools: _list_mcp_tools()에서 반환된 tool 목록
-            
-        Returns:
-            Bedrock toolConfig 딕셔너리
-        """
+        """MCP tool spec을 Bedrock toolConfig 형식으로 변환"""
         bedrock_tools = []
+        
+        from core.llm.llm_manger import _sanitize_extended_thinking_tokens
         
         # 1. MCP Tools 변환
         if mcp_tools:
@@ -1028,14 +1241,17 @@ class AgentBase(ABC):
                 func = tool.get("function", {})
                 params = func.get("parameters", {})
                 
-                # description이 비어있으면 안 되므로 기본값 제공
+                tool_name = _sanitize_extended_thinking_tokens(func.get("name", "")).strip()
+                
                 description = func.get("description", "").strip()
+                description = _sanitize_extended_thinking_tokens(description)
+                
                 if not description:
-                    description = f"MCP tool: {func.get('name', 'unknown')}"
+                    description = f"MCP tool: {tool_name}"
                 
                 bedrock_tools.append({
                     "toolSpec": {
-                        "name": func.get("name"),
+                        "name": tool_name,
                         "description": description,
                         "inputSchema": {
                             "json": params
@@ -1073,13 +1289,61 @@ class AgentBase(ABC):
             }
         })
         
-        # 3. delegate_to_agent Tool 추가
+        # 3. delegate Tool 추가
         available_agents = self._get_available_agents_list()
         if available_agents:
             bedrock_tools.append({
                 "toolSpec": {
                     "name": "delegate",
-                    "description": "다른 에이전트에게 작업을 위임합니다. 현재 에이전트가 처리할 수 없거나 다른 에이전트의 전문성이 필요한 경우 사용합니다.",
+                    "description": """
+                    다른 에이전트에게 작업을 위임합니다. 현재 에이전트가 처리할 수 없거나 다른 에이전트의 전문성이 필요한 경우 사용합니다.
+                    반드시, 현재 에이전트가 위임 가능한 agent를 delegate해야 합니다. 
+[delegate agents]
+1. plan_input_agent
+   - 역할: 기본 정보 8가지 수집 및 검증
+     * 초기 자본, 희망 지역, 희망 주택 가격, 희망 주택 유형, 소득 대비 사용 비율
+     * 이름, 나이, 투자성향 (Tool로 조회)
+   - 위임 시점:
+     * 사용자 입력 정보가 들어온 경우
+     * 8가지 정보 중 하나라도 없는 경우
+     * 검증 실패한 정보가 있는 경우
+     * 이름/나이/투자성향 정보 없는 경우
+
+2. validation_agent
+   - 역할: 기본 정보 6가지 검증
+     * initial_prop, hope_location, hope_price, hope_housing_type, income_usage_ratio, ratio_str
+   - 위임 시점:
+     * 정보가 모였으나 검증 미완료
+     * 검증 실패 후 재입력된 경우
+     * 이미 검증이 되었으나 새로운 입력이 들어와 검증이 필요한 경우
+     * 평균 시세 비교 및 포트폴리오 저장 필요시
+
+3. loan_agent
+   - 역할: 대출 한도, DSR/LTV, 상환 구조 계산
+   - 위임 시점:
+     * plan_input_agent 완료 후
+     * 기본 정보 6가지 검증 완료
+     * 대출 결과 없는 경우
+
+4. saving_agent
+   - 역할: 예·적금 저축 전략 설계
+   - 위임 시점:
+     * 사용자가 예금/적금 전략 요청
+     * 대출 후 자기자본 부족
+     * 예금/적금 상품 입력/선택/추천 요청
+
+5. fund_agent
+   - 역할: 펀드/투자 전략 제안
+   - 위임 시점:
+     * 추가 투자 수익 언급
+     * '펀드', 'ETF', '투자', '수익률' 키워드 사용
+
+6. summary_agent
+   - 역할: 최종 주택 자금 계획 리포트 작성
+   - 위임 시점:
+     * 주요 단계 대부분 완료
+     * '전체 요약', '최종 계획', '리포트', '정리' 요청
+                    """,
                     "inputSchema": {
                         "json": {
                             "type": "object",
@@ -1111,18 +1375,7 @@ class AgentBase(ABC):
         tool_name: str,
         tool_args: Dict[str, Any]
     ) -> Any:
-        """MCP 도구 실행
-        
-        Args:
-            tool_name: 실행할 도구 이름
-            tool_args: 도구 인자 딕셔너리
-            
-        Returns:
-            Any: 도구 실행 결과
-            
-        Raises:
-            Exception: 도구 실행 실패 시
-        """
+        """MCP 도구 실행"""
         try:
             result = await self.mcp.call_tool(tool_name, tool_args)
             logger.info(f"[{self.name}] Tool '{tool_name}' Result : {result}")
@@ -1133,28 +1386,14 @@ class AgentBase(ABC):
             raise
     
     def _remove_think_tag(self, text: str) -> str:
-        """</think> 태그 제거 및 JSON 추출
-        
-        LLM 응답에서 <think> 태그를 제거하고 순수한 JSON만 추출합니다.
-        
-        Args:
-            text: 원본 텍스트
-            
-        Returns:
-            str: 태그가 제거된 깨끗한 텍스트
-        """
-        # 1. </think>가 있다면, 그 뒤의 내용만 취합니다.
+        """</think> 태그 제거 및 JSON 추출"""
         if "</think>" in text:
             text = text.rsplit("</think>", 1)[-1]
-        
-        # 2. 혹시라도 <think>만 있고 닫는 태그가 없는 경우를 대비해 안전장치로 시작 태그 처리
         elif "<think>" in text:
             text = text.rsplit("<think>", 1)[-1]
 
-        # 3. 앞뒤 공백 제거
         text = text.strip()
         
-        # 4. 순수한 JSON 객체만 추출 (첫 '{' 부터 마지막 '}' 까지)
         start_idx = text.find("{")
         end_idx = text.rfind("}")
         
@@ -1162,7 +1401,6 @@ class AgentBase(ABC):
             text = text[start_idx : end_idx + 1]
         
         return text
-
 
     # =============================
     # 기타 공통 메서드

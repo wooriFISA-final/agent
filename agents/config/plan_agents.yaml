@@ -17,8 +17,8 @@ agents:
 
     llm_config:
       model: "gpt-oss-120b"
-      temperature: 0.1
-      top_p: 0.1
+      temperature: 0.01
+      top_p: 0.01
       stream: false
 
   # --------------------------------------
@@ -63,8 +63,8 @@ agents:
 
     llm_config:
       model: "gpt-oss-120b"
-      temperature: 0.1
-      top_p: 0.1
+      temperature: 0.01
+      top_p: 0.01
       stream: false
 
   # --------------------------------------
@@ -87,8 +87,8 @@ agents:
 
     llm_config:
       model: "gpt-oss-120b"
-      temperature: 0.15
-      top_p: 0.4
+      temperature: 0.01
+      top_p: 0.01
       stream: false
   # --------------------------------------
   # 4) 예·적금 추천 및 입력 Agent
@@ -110,8 +110,8 @@ agents:
 
     llm_config:
       model: "gpt-oss-120b"
-      temperature: 0.1
-      top_p: 0.1
+      temperature: 0.01
+      top_p: 0.01
       stream: false
   # --------------------------------------
   # 5) 펀드 추천 및 입력 Agent
@@ -133,8 +133,8 @@ agents:
 
     llm_config:
       model: "gpt-oss-20b"
-      temperature: 0.35
-      top_p: 0.8
+      temperature: 0.01
+      top_p: 0.01
       stream: false
   # --------------------------------------
   # 6) 최종 자산관리 요약 리포트 Agent
@@ -155,6 +155,6 @@ agents:
 
     llm_config:
       model: "gpt-oss-20b"
-      temperature: 0.25
-      top_p: 0.7
+      temperature: 0.4
+      top_p: 0.8
       stream: false

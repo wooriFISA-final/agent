@@ -80,6 +80,9 @@ async def _execute_graph(
 
             if has_history:
                 logger.info(f"세션 '{chat_request.session_id}'의 대화를 이어갑니다.")
+                # ✅ 새 메시지만 전달 - add_messages reducer가 checkpointer의 압축된 메시지와 병합
+                existing_count = len(existing_state.values.get('global_messages', []))
+                logger.info(f"   Checkpoint 메시지: {existing_count}개")
                 input_state = {"global_messages": [HumanMessage(content=chat_request.message)]}
             else:
                 logger.info(f"세션 '{chat_request.session_id}'의 새로운 대화를 시작합니다.")

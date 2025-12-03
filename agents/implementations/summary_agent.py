@@ -35,6 +35,7 @@ class SummaryAgent(AgentBase):
             "simulate_investment",           # 부족 자금 + 투자 시뮬레이션 (/input/simulate_combined_investment)
             "save_summary_report",           # 최종 보고서 저장 (/db/save_summary_report)
         ]
+        self.allowed_agents: list[str] = ["supervisor_agent"]
 
     # =============================
     # 1. 전처리: 입력 데이터 검증
@@ -91,20 +92,20 @@ class SummaryAgent(AgentBase):
 
 [Step-by-Step]
 1. get_user_full_profile Tool 호출
-  - 사용자 기본 정보(이름, 희망지역/가격/주택유형, 예금/적금/펀드 배분금액, 부족금액, 초기자산, 사용급여비율, 월급여, 연봉)를 가져와야 한다.
+  - get_user_full_profile tool을 호출하여 사용자 기본 정보(이름, 희망지역/가격/주택유형, 예금/적금/펀드 배분금액, 부족금액, 초기자산, 사용급여비율, 월급여, 연봉)를 가져와야 한다.
   
 2. get_user_loan_info Tool 호출 
-  - 사용자의 대출 정보(대출가능금액, 대출상품명, 은행명, 상품요약, 금리조건, 대출한도, 대출기간, 상환방식, 우대금리정보)를 가져와야 한다.
+  - get_user_loan_info tool을 호출하여 사용자의 대출 정보(대출가능금액, 대출상품명, 은행명, 상품요약, 금리조건, 대출한도, 대출기간, 상환방식, 우대금리정보)를 가져와야 한다.
 
 3. get_user_products_info
-  - 사용자가 선택한 예금/적금/펀드 상품 정보(상품명, 상품유형, 저축/투자금액, 상품설명, 유형별 개수 및 총액)를 가져와야 한다.
+  - get_user_products_info tool을 호출하여 사용자가 선택한 예금/적금/펀드 상품 정보(상품명, 상품유형, 저축/투자금액, 상품설명, 유형별 개수 및 총액)를 가져와야 한다.
 
 4. simulate_investment
-  -  복리 기반 투자 시뮬레이션 결과 (목표달성 예상기간/날짜, 총투자원금, 총수익금, 수익률, 예적금/펀드 최종잔액)를 가져온다.
+  -  simulate_investment tool을 호출하여 복리 기반 투자 시뮬레이션 결과 (목표달성 예상기간/날짜, 총투자원금, 총수익금, 수익률, 예적금/펀드 최종잔액)를 가져온다.
   
 5. Response
   - 4번 까지의 동작이 실패한 경우가 있다면, 해당 동작을 다시 수행해라.
-  - 4번 까지의 동작이 성공하였다면, [Planner Report Format]에 따라 Planner Report를 작성하여 사용자에게 제공해라.
+  - 4번 까지의 동작이 성공하였다면, [Planner Report Format]에 따라 Planner Report를 작성하여 사용자에게 Planner Report를 제공해라.
 
 --- 
 

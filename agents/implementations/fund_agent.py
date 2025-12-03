@@ -41,7 +41,7 @@ class FundAgent(AgentBase):
             "validate_selected_funds_products", # /input/validate_selected_funds_products
             "save_selected_funds_products",     # /db/save_selected_funds_products
         ]
-
+        self.allowed_agents: list[str] = ["supervisor_agent"]
     # =============================
     # 1. 입력 검증
     # =============================
@@ -95,7 +95,7 @@ class FundAgent(AgentBase):
     - 펀드 상품에 대한 정보(ML종합 점수, 성과 점수, 안정성 점수, 1년 수익률, 3개월 수익률, 총보수, 펀드 규모, 변동성, 최대 손실 낙폭)도 포함되어 있다.
 
 4. get_investment_ratio 호출
-    - 사용자에 투자 스타일을 알기 위해 사용자 투자 성향의 정보(투자 성향, 투자성향 별 설명)를 가져온다.
+    - 사용자에 투자성향을 알기 위해 get_investment_ratio을 호출하여 사용자 투자 성향의 정보(투자 성향, 투자성향 별 설명)를 가져와라.
 
 5. Response
     - 4번 까지의 동작이 정상적으로 실행(성공)되었다면, 사용자에게 응답해라.
@@ -103,14 +103,14 @@ class FundAgent(AgentBase):
     - 응답 형식: 설명, 표 등을 활용하여 응답해라.
 
 6. validate_selected_funds_products 호출
-    - 사용자가 선택한 펀드 상품들의 금액이 현재 사용자의 펀드 투자 금액 한도에 부합한지 검증한다.
+    - 사용자가 선택한 펀드 상품들의 금액이 현재 사용자의 펀드 투자 금액 한도에 부합한지 validate_selected_funds_products tool을 호출하여 검증해라.
 
 7. validate_selected_funds_products 결과 확인
     - 결과 성공(success=true)이면, 다음 단게(8단계)를 진행해라.
     - 결과 실패(success=false)이면, 사용자아게 펀드 상품 선택을 다시 안내해서 사용자가 펀드 투자 금액 한도에 맞게 투자할 수 있도록 해라.
 
 8. save_selected_funds_products Tool 호출
-    - 검증된 펀드 투자 상품들을 my_products에 실제 DB에 저장해라.
+    - save_selected_funds_products tool을 호출하여 검증된 펀드 투자 상품들을 my_products에 실제 DB에 저장해라.
 
 [MCP Tools]
 1) get_user_profile_for_fund
