@@ -128,6 +128,3 @@ edges:
 # Graph 설정
 # ============================================
 entry_point: supervisor_agent
-
-# finish_points:
-#   - summary_agent

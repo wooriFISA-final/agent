@@ -1,139 +1,197 @@
 import logging
-from typing import Dict, Any, List
-# from langchain_core.messages import HumanMessage
-# agents.base.agent_base의 AgentBase와 BaseAgentConfig가 있다고 가정
+from typing import Dict, Any
 from agents.base.agent_base import AgentBase, BaseAgentConfig
-# agents.registry.agent_registry의 AgentRegistry와 AgentState가 있다고 가정
 from agents.registry.agent_registry import AgentRegistry
 from agents.config.base_config import AgentState
-
-
-# 🚨 [추가] 스케줄링 구현을 위한 datetime 임포트
-from datetime import datetime, date 
-import time
+from datetime import date
 
 logger = logging.getLogger("agent_system")
 
 
 @AgentRegistry.register("report_agent")
 class ReportAgent(AgentBase):
-    """
-    Report Agent (보고서 에이전트)
-    
-    역할:
-    - 고객의 금융 데이터를 분석하고, 정책 변동 사항을 확인하여
-    - 최종 고객에게 전달할 명확하고 간결하며 전문적인 월간 재무 보고서를 작성합니다.
-    
-    사용 가능한 도구:
-    1. rebuild_vector_db_tool: 정책 문서를 기반으로 FAISS 벡터 DB를 재구축 (🚨 신규 추가)
-    2. analyze_user_spending_tool: 월별 소비 데이터 비교 분석 및 군집 생성
-    3. analyze_investment_profit_tool: 투자 상품 손익/진척도 분석
-    4. analyze_user_profile_changes_tool: 사용자 개인 지수 변동 분석 (연봉, 부채, 신용 점수)
-    5. check_and_report_policy_changes_tool: 금융 정책 변동 사항 자동 비교 및 보고서 생성
-    6. generate_final_summary_llm: 통합 보고서 본문을 받아 핵심 3줄 요약 생성
-    """
-    
-    # 🎯 [스케줄 설정]: 매월 보고서를 생성할 날짜 (예: 5일)
-    REPORT_SCHEDULE_DAY = 5 
-    
+
+    REPORT_SCHEDULE_DAY = 1
+
     def __init__(self, config: BaseAgentConfig):
         super().__init__(config)
-        
-        # 🎯 사용 가능한 6가지 전문 Tool 목록을 정의 (DB 재구축 툴 포함)
+
         self.allowed_tools = [
-            "rebuild_vector_db_tool",  # 🚨 [신규 추가]
+            "get_report_member_details",
+            "get_user_consume_data_raw",
+            "get_recent_report_summary",
+            "analyze_user_profile_changes_tool",
             "analyze_user_spending_tool",
             "analyze_investment_profit_tool",
-            "analyze_user_profile_changes_tool",
             "check_and_report_policy_changes_tool",
-            "generate_final_summary_llm",
+            "save_report_document",
         ]
-        
-        # 위임 가능한 Agent는 현재 설정하지 않음
+
         self.allowed_agents = []
 
+    # --------------------------
+    # 기본 입력 검증
+    # --------------------------
     def validate_input(self, state: Dict[str, Any]) -> bool:
-        """state에 messages가 있고, HumanMessage가 포함되어 있는지 확인"""
         messages = state.get("messages")
-        
         if not messages or not isinstance(messages, list):
-            logger.error(f"[{self.name}] 'messages' must be a non-empty list")
+            logger.error(f"[{self.name}] messages must be a non-empty list.")
             return False
-        
-        # 보고서 생성에 필요한 핵심 데이터 (예: report_month_str 등)가 state에 있는지 확인
-        if "report_month_str" not in state:
-            logger.error(f"[{self.name}] Missing required key 'report_month_str' in state.")
-            return False
-            
         return True
-        
-    def pre_execute(self, state: AgentState) -> AgentState:
-        """실행 전 전처리 및 월간 스케줄 트리거 확인"""
-        
-        # ----------------------------------------------------------------------
-        # 🎯 [주석 처리된 월간 스케줄 트리거]
-        # ----------------------------------------------------------------------
-        """
-        # 🚨 [트리거 로직 시작] 이 주석을 풀면, 보고서 생성일이 아닌 경우 실행이 중단됩니다.
-        try:
-            # 현재 날짜 및 보고서 월의 시작일 (report_month_str은 YYYY-MM-DD 형태)
-            current_date = datetime.now().date()
-            report_month_start = datetime.strptime(state["report_month_str"], "%Y-%m-%d").date().replace(day=1)
-            
-            # 다음 보고서 실행 예상일 (보고서 월의 REPORT_SCHEDULE_DAY)
-            if current_date.month == report_month_start.month and current_date.year == report_month_start.year:
-                # 현재 월이 보고서 월과 같으면, 해당 월의 스케줄 날짜 확인
-                target_report_date = report_month_start.replace(day=self.REPORT_SCHEDULE_DAY)
-            else:
-                # 보고서 월이 현재 월보다 앞서 있다면(과거 보고 요청), 바로 실행 허용
-                if report_month_start < current_date.replace(day=1):
-                    logger.info("과거 보고서 생성이 요청되어 스케줄 체크를 건너뜁니다.")
-                    return state
-                    
-                # 보고서 월이 현재 월보다 나중이라면, 스케줄 날짜를 다음 달로 계산
-                target_month = (report_month_start.month % 12) + 1
-                target_year = report_month_start.year + (1 if report_month_start.month == 12 else 0)
-                target_report_date = date(target_year, target_month, self.REPORT_SCHEDULE_DAY)
 
-            # [핵심 체크] 오늘 날짜가 목표 실행일 이전이라면 실행 중단
-            if current_date < target_report_date:
-                # 💡 [테스트 모드 임시 해제] 테스트를 위해 이 조건문을 주석 처리합니다.
-                # error_msg = f"[{self.name}] 월간 보고서 스케줄 실행일({target_report_date.strftime('%Y-%m-%d')})이 아닙니다. 실행을 중단합니다."
-                # logger.warning(error_msg)
-                # raise ValueError(error_msg)
-                pass # 테스트 모드에서는 통과
-                
-        except Exception as e:
-            logger.error(f"[{self.name}] 스케줄 체크 오류: {e}")
-            raise e
-        # 🚨 [트리거 로직 끝] 이 주석을 풀면, 보고서 생성일이 아닌 경우 실행이 중단됩니다.
-        """
-        # ----------------------------------------------------------------------
-        # 🎯 [테스트 모드] 주석을 풀지 않으면 항상 즉시 실행 가능합니다.
-        # ----------------------------------------------------------------------
-        
+    # --------------------------
+    # 사전 실행 처리
+    # --------------------------
+    def pre_execute(self, state: AgentState) -> AgentState:
+
+        # 1. user_id 설정
+        if "user_id" not in state:
+            import re
+            messages = state.get("messages", []) or state.get("global_messages", [])
+            found = None
+
+            for msg in reversed(messages):
+                text = msg.content if hasattr(msg, "content") else str(msg)
+
+                m1 = re.search(r"(\d+)번\s*사용자", text)
+                if m1:
+                    found = int(m1.group(1))
+                    break
+
+                m2 = re.search(r"user_id[:\s]+(\d+)", text, re.IGNORECASE)
+                if m2:
+                    found = int(m2.group(1))
+                    break
+
+            if found:
+                state["user_id"] = found
+                logger.info(f"[{self.name}] Extracted user_id: {found}")
+            else:
+                input_data = state.get("input", {})
+                if isinstance(input_data, dict) and "user_id" in input_data:
+                    state["user_id"] = input_data["user_id"]
+                else:
+                    state["user_id"] = 1
+                    logger.info(f"[{self.name}] user_id not found. Default=1")
+
+        # 2. 보고서 기준 월(report_month_str)
+        if "report_month_str" not in state:
+            import re
+            messages = state.get("messages", []) or state.get("global_messages", [])
+
+            found_date = None
+            for msg in reversed(messages):
+                text = msg.content if hasattr(msg, "content") else str(msg)
+
+                m = re.search(r"(\d{4})년\s*(\d{1,2})월", text)
+                if m:
+                    year, month = m.groups()
+                    found_date = f"{year}-{int(month):02d}-01"
+                    break
+
+                m2 = re.search(r"(\d{4})-(\d{1,2})", text)
+                if m2:
+                    year, month = m2.groups()
+                    found_date = f"{year}-{int(month):02d}-01"
+                    break
+
+            if found_date:
+                state["report_month_str"] = found_date
+                logger.info(f"[{self.name}] Extracted report month: {found_date}")
+            else:
+                today = date.today()
+                state["report_month_str"] = today.strftime("%Y-%m-01")
+                logger.warning(f"[{self.name}] No report month found. Default=current month")
+
         return state
-        
+
+    # --------------------------
+    # Agent 역할 정의 프롬프트
+    # --------------------------
     def get_agent_role_prompt(self) -> str:
-        """
-        Agent의 역할 정의
-        
-        이 Prompt 하나로 Agent의 모든 행동 원칙이 결정됨
-        """
-        return f"""당신은 금융 보고서 작성 전문 에이전트입니다.
-        
-        주된 임무는 사용자로부터 수집된 모든 금융 데이터(소비 기록, 투자 상품, 정책 변동, 개인 지표)를 분석하고 통합하여, 최종 고객에게 전달할 명확하고 간결하며 전문적인 월간 재무 보고서를 작성하는 것입니다.
-        
-        **행동 원칙:**
-        1. **순차적 도구 사용**: 보고서의 각 섹션을 완성하기 위해 6가지 전문 도구를 순차적으로 호출하여 필요한 정보를 수집하십시오.
-        2. **최종 요약**: 모든 정보 수집 및 분석이 완료되면, 'generate_final_summary_llm' 도구를 사용하여 통합 보고서의 핵심 내용을 간결한 3줄 요약본으로 최종 정리하십시오.
-        3. **간결한 응답**: 보고서 생성을 완료한 후에는 생성된 보고서와 핵심 요약본을 포함하여 사용자에게 최종적으로 보고하십시오.
-        
-        **도구 사용 순서 (권장):**
-        1. **rebuild_vector_db_tool**: 정책 문서가 최신 버전으로 업데이트된 경우, **반드시 가장 먼저** 이 툴을 호출하여 정책 DB를 최신화하십시오. (일반적으로는 최신화가 필요하지 않으면 건너뛰지만, 시스템 초기화나 정책 파일 변경 시 필수입니다.)
-        2. analyze_user_profile_changes_tool (개인 지표 변동)
-        3. analyze_user_spending_tool (소비 분석)
-        4. analyze_investment_profit_tool (투자 분석)
-        5. check_and_report_policy_changes_tool (정책 변동) - **업데이트된 DB를 사용하도록 유의**
-        6. 모든 분석 결과를 합쳐 최종 보고서 본문을 구성한 후, generate_final_summary_llm (3줄 요약)을 호출하십시오.
-        """
+        return """
+당신은 월간 금융 보고서를 자동 생성하는 Agent입니다.
+
+[실행 순서]
+1) get_report_member_details
+2) get_user_consume_data_raw (최근 2개월)
+3) get_recent_report_summary (전월 조회)
+4) analyze_user_profile_changes_tool
+5) analyze_user_spending_tool
+6) analyze_investment_profit_tool
+7) check_and_report_policy_changes_tool
+8) save_report_document
+
+[생성 항목]
+- cluster_nickname: 형용사+명사 (예: 알뜰한 미식가)
+- consume_report: 소비 분석
+- threelines_summary: 3줄 요약
+
+[중요] save_report_document 호출 시:
+- spend_chart_json, trend_chart_json, fund_comparison_json은 Tool이 반환한 문자열을 그대로 전달
+- 절대 파싱하거나 객체로 변환하지 말 것
+
+순서대로 Tool을 호출하고 save_report_document로 저장 후 종료하세요.
+"""
+
+    # --------------------------
+    # 본문 Prompt 템플릿
+    # --------------------------
+    def get_prompt_template(self) -> str:
+        return """
+자동 보고서 생성
+
+user_id: {user_id}
+report_month_str: {report_month_str}
+
+순서:
+1. get_report_member_details(user_id={user_id})
+2. get_user_consume_data_raw(user_id={user_id}, dates=["최근2개월"])
+3. get_recent_report_summary(member_id={user_id}, report_date_for_comparison="전월")
+   ⚠️ 중요: {report_month_str}의 전월 리포트를 조회하세요
+   예: report_month_str="2024-08-01" → "2024-07" 조회
+
+4. analyze_user_profile_changes_tool(...)
+5. analyze_user_spending_tool(...)
+6. analyze_investment_profit_tool(user_id={user_id})
+7. check_and_report_policy_changes_tool(report_month_str={report_month_str})
+
+[중요] 5~7번 결과를 활용해:
+
+**cluster_nickname 생성 (필수 형식)**
+- 반드시 "형용사 + 명사" 구조
+- 예: "알뜰한 미식가", "스마트한 투자자", "계획적인 플래너"
+- 소비 상위 카테고리를 반영하되 형식 준수
+
+**consume_report 작성**
+- 총 지출, 전월 대비 변화, Top 5 카테고리 설명
+- 소비 조언 포함
+
+**threelines_summary 생성**
+- "1. ... 2. ... 3. ..." 형식
+
+8. save_report_document 호출:
+   - member_id: {user_id}
+   - report_date: {report_month_str}
+   - report_text: 생성한 threelines_summary
+   - metadata: 모든 Tool 결과를 포함한 딕셔너리
+
+metadata 필수 필드:
+- cluster_nickname (형용사+명사 형식)
+- consume_report (문자열)
+- consume_analysis_summary (객체)
+- spend_chart_json (문자열)
+- change_analysis_report (문자열)
+- change_raw_changes (리스트)
+- profit_analysis_report (빈 문자열 "")
+- net_profit (숫자)
+- profit_rate (숫자)
+- trend_chart_json (문자열)
+- fund_comparison_json (문자열)
+- policy_analysis_report (문자열)
+- policy_changes (리스트)
+- threelines_summary (문자열)
+
+저장 성공 후 최종 응답을 보내고 종료하십시오.
+"""
+
