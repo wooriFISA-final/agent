@@ -186,8 +186,19 @@ class LLMManager:
             
             if role == "system":
                 # System 메시지는 별도 배열로
+                # content가 리스트 형식인지 문자열인지 확인
+                if isinstance(content, list) and content:
+                    # 리스트 형식이면 첫 번째 text 추출
+                    if isinstance(content[0], dict) and "text" in content[0]:
+                        text_content = content[0]["text"]
+                    else:
+                        text_content = str(content)
+                else:
+                    # 문자열이면 그대로 사용
+                    text_content = str(content)
+                
                 # 제어 토큰 제거
-                sanitized_content = _sanitize_extended_thinking_tokens(content)
+                sanitized_content = _sanitize_extended_thinking_tokens(text_content)
                 system_messages.append({"text": sanitized_content})
                 
             elif role in ["user", "assistant"]:
