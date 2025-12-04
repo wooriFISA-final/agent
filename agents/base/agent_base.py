@@ -139,7 +139,7 @@ class AgentBase(ABC):
                 return {"role": "assistant", "content": [{"text": sanitized_text}]}
         
         elif isinstance(message, SystemMessage):
-            return {"role": "user", "content": [{"text": f"[System] {message.content}"}]}
+            return {"role": "system", "content": [{"text": message.content}]}
         
         elif isinstance(message, ToolMessage):
             logger.warning(f"[{self.name}] ToolMessage deprecated, use HumanMessage with toolResult")
@@ -287,14 +287,6 @@ class AgentBase(ABC):
             state["global_messages"] = global_messages
         
         logger.info(f"[{self.name}] Global messages count: {len(global_messages)}")
-        
-        agent_role = self.get_agent_role_prompt()
-        system_msg = SystemMessage(content=agent_role)
-        
-        global_messages = [system_msg] + global_messages
-        state["global_messages"] = global_messages
-        
-        logger.info(f"[{self.name}] ✅ Added agent role as SystemMessage at the beginning")
         
         available_tools = await self._list_mcp_tools()
         logger.info(f"[{self.name}] MCP tools available: {len(available_tools)}")
@@ -599,24 +591,36 @@ class AgentBase(ABC):
         else:
             tools_formatted = "     - (없음)"
         
-        system_prompt = DECISION_PROMPT.format(
+        # ✅ DECISION_PROMPT + agent_role을 합쳐서 SystemMessage로 추가
+        agent_role = self.get_agent_role_prompt()
+        
+        decision_prompt = DECISION_PROMPT.format(
             name=self.name,
             user_id=user_id,
             available_agents=available_agents,
             available_tools=tools_formatted
         )
         
+        # Implementation Prompt + DECISION_PROMPT 결합
+        combined_system_prompt = f"""{agent_role}
+
+---
+
+{decision_prompt}"""
+        
         try:
             logger.info(f"[{self.name}] 🤔 Making decision with Bedrock Native Tool Calling")
+            logger.info(f"[{self.name}] System prompt: Implementation + DECISION combined")
         
-            messages.append(HumanMessage(content=system_prompt))
+            # messages 앞에 SystemMessage 추가 (매번 새로 추가)
+            messages_with_system = [SystemMessage(content=combined_system_prompt)] + messages
             state["global_messages"] = messages
             
             bedrock_tool_config = state.get("bedrock_tool_config")
             if not bedrock_tool_config:
                 raise Exception("bedrock_tool_config not found in state")
             
-            formatted_messages = self._convert_messages_to_dict(messages)
+            formatted_messages = self._convert_messages_to_dict(messages_with_system)
             
             from core.llm.llm_manger import LLMHelper
             response = await asyncio.to_thread(
@@ -649,6 +653,7 @@ class AgentBase(ABC):
                 
                 logger.info(f"[{self.name}] ✅ Final response via end_turn")
                 
+                # ✅ SystemMessage 제거 후 messages에 추가
                 messages.append(AIMessage(content=response_text))
                 state["global_messages"] = messages
                 
@@ -690,6 +695,7 @@ class AgentBase(ABC):
                         logger.warning(f"[{self.name}] ⚠️ Sanitized toolUse.name in message: '{tool_name_raw}' → '{tool_name_clean}'")
                         tool_use["name"] = tool_name_clean
 
+            # ✅ SystemMessage 제거 후 messages에 추가
             messages.append(AIMessage(content=filtered_content))
             state["global_messages"] = messages
             
