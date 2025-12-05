@@ -13,7 +13,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main_dev', url: 'https://github.com/[your-username]/[agent-repo].git'
+                git branch: 'main_dev', url: 'https://github.com/wooriFISA-final/agent.git'
             }
         }
         
