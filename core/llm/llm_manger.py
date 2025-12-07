@@ -180,9 +180,21 @@ class LLMManager:
         system_messages = []
         conversation_messages = []
         
-        for msg in messages:
+        for idx, msg in enumerate(messages):
             role = msg.get("role")
             content = msg.get("content", "")
+            
+            # ✅ Validate role before processing
+            valid_roles = ["system", "user", "assistant", "tool"]
+            if role not in valid_roles:
+                logger.error(f"⚠️ Invalid message role detected at index {idx}: '{role}'")
+                logger.error(f"   Message type: {type(msg)}")
+                logger.error(f"   Message keys: {list(msg.keys())}")
+                logger.error(f"   Content preview: {str(content)[:200]}")
+                # Force convert to user role
+                logger.warning(f"   Converting '{role}' to 'user' to prevent API rejection")
+                role = "user"
+                msg["role"] = "user"
             
             if role == "system":
                 # System 메시지는 별도 배열로

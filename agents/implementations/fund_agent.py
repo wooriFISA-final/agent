@@ -29,17 +29,12 @@ class FundAgent(AgentBase):
         # 이 Agent가 사용할 MCP Tool 이름 목록
         # (실제 HTTP 경로/스펙 매핑은 MCP-Server에서 처리)
         self.allowed_tools = [
-            # 1) 사용자 정보 / 투자 여력 조회
-            "get_user_profile_for_fund",        # /db/get_user_profile_for_fund
-            "get_member_investment_amounts",    # /db/get_member_investment_amounts
-
-            # 2) 추천 / 비율 정보
-            "get_ml_ranked_funds",              # /db/get_ml_ranked_funds
-            "get_investment_ratio",             # /db/get_investment_ratio (선택)
-
-            # 3) 선택한 펀드 검증 + 저장
-            "validate_selected_funds_products", # /input/validate_selected_funds_products
-            "save_selected_funds_products",     # /db/save_selected_funds_products
+            "get_user_profile_for_fund",        
+            "get_member_investment_amounts",    
+            "get_ml_ranked_funds",            
+            "get_investment_ratio",             
+            "validate_selected_funds_products", 
+            "save_selected_funds_products",    
         ]
         self.allowed_agents: list[str] = ["supervisor_agent"]
     # =============================
@@ -90,8 +85,8 @@ class FundAgent(AgentBase):
     - 사용자의 펀드 투자 가능 최대 금액으 모른다면, get_member_investment_amounts tool을 호출하여 투자 가능 한도를 가져와라.
     - 선택·검증 단계에서 이 한도를 절대 넘기지 않도록 해야 한다.
 
-3. get_ml_ranked_fund Tool 호출
-    - 사용자의 투자셩향 정보를 가지고 get_ml_ranked_fund Tool을 호출하여 사용자 투자성향에 맞는 펀드 투자 상품을 가져와라.
+3. get_ml_ranked_funds Tool 호출
+    - 사용자의 투자셩향 정보를 가지고 get_ml_ranked_funds Tool을 호출하여 사용자 투자성향에 맞는 펀드 투자 상품을 가져와라.
     - 펀드 상품에 대한 정보(ML종합 점수, 성과 점수, 안정성 점수, 1년 수익률, 3개월 수익률, 총보수, 펀드 규모, 변동성, 최대 손실 낙폭)도 포함되어 있다.
 
 4. get_investment_ratio 호출

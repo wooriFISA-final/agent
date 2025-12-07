@@ -151,10 +151,17 @@ class AgentBase(ABC):
             logger.warning(f"[{self.name}] ⚠️ Unknown message type: {msg_type}")
             logger.warning(f"[{self.name}]    Message attributes: {msg_attrs}")
             
+            # Check if message has a 'type' attribute that might have wrong value
             if hasattr(message, 'type'):
-                logger.warning(f"[{self.name}]    Message.type: {message.type}")
+                msg_type_attr = message.type
+                logger.warning(f"[{self.name}]    Message.type: {msg_type_attr}")
+                # If type is something like 'final', don't use it
+                if msg_type_attr not in ['human', 'ai', 'system', 'tool']:
+                    logger.error(f"[{self.name}]    Invalid message.type '{msg_type_attr}' detected! Using 'user' instead")
             
-            return {"role": "user", "content": [{"text": str(message)}]}
+            # Always return user role for unknown messages
+            content_str = str(message.content) if isinstance(message.content, str) else str(message)
+            return {"role": "user", "content": [{"text": content_str}]}
     
     def _convert_messages_to_dict(self, messages: List) -> List[Dict[str, str]]:
         """메시지 리스트를 딕셔너리 리스트로 일괄 변환"""
@@ -1265,35 +1272,35 @@ class AgentBase(ABC):
                     }
                 })
         
-        # 2. respond_intermediate Tool 추가
-        bedrock_tools.append({
-            "toolSpec": {
-                "name": "respond_intermediate",
-                "description": """중간 단계 신호. 사용자에게 최종 응답을 제공하기 전에 추가 작업(DB 저장, 데이터 처리 등)이 더 필요한 경우 사용합니다.
+#         # 2. respond_intermediate Tool 추가
+#         bedrock_tools.append({
+#             "toolSpec": {
+#                 "name": "respond_intermediate",
+#                 "description": """중간 단계 신호. 사용자에게 최종 응답을 제공하기 전에 추가 작업(DB 저장, 데이터 처리 등)이 더 필요한 경우 사용합니다.
 
-사용 시나리오:
-- 정보 수집 완료 → DB 저장 필요 → 저장 후 최종 응답
-- 데이터 조회 완료 → 추가 계산 필요 → 계산 후 최종 응답
-- 중간 결과 확인 → 검증 필요 → 검증 후 최종 응답
+# 사용 시나리오:
+# - 정보 수집 완료 → DB 저장 필요 → 저장 후 최종 응답
+# - 데이터 조회 완료 → 추가 계산 필요 → 계산 후 최종 응답
+# - 중간 결과 확인 → 검증 필요 → 검증 후 최종 응답
 
-**중요**: 
-- 이 Tool 사용 후 필요한 MCP Tool을 호출하여 작업을 완료하세요
-- 모든 작업 완료 후 최종 응답은 별도로 생성해야 합니다 (end_turn)
-- 이 Tool은 "아직 작업이 더 필요함"을 알리는 신호일 뿐, 사용자에게 직접 표시되지 않습니다""",
-                "inputSchema": {
-                    "json": {
-                        "type": "object",
-                        "properties": {
-                            "reason": {
-                                "type": "string",
-                                "description": "추가 작업이 필요한 이유 (예: 'DB에 상담 내용 저장 필요', '포트폴리오 계산 후 응답 생성 필요')"
-                            }
-                        },
-                        "required": ["reason"]
-                    }
-                }
-            }
-        })
+# **중요**: 
+# - 이 Tool 사용 후 필요한 MCP Tool을 호출하여 작업을 완료하세요
+# - 모든 작업 완료 후 최종 응답은 별도로 생성해야 합니다 (end_turn)
+# - 이 Tool은 "아직 작업이 더 필요함"을 알리는 신호일 뿐, 사용자에게 직접 표시되지 않습니다""",
+#                 "inputSchema": {
+#                     "json": {
+#                         "type": "object",
+#                         "properties": {
+#                             "reason": {
+#                                 "type": "string",
+#                                 "description": "추가 작업이 필요한 이유 (예: 'DB에 상담 내용 저장 필요', '포트폴리오 계산 후 응답 생성 필요')"
+#                             }
+#                         },
+#                         "required": ["reason"]
+#                     }
+#                 }
+#             }
+#         })
         
         # 3. delegate Tool 추가
         available_agents = self._get_available_agents_list()
@@ -1370,7 +1377,7 @@ class AgentBase(ABC):
                 }
             })
         
-        logger.info(f"[{self.name}] ✅ Created Bedrock toolConfig: {len(bedrock_tools)} tools (MCP: {len(mcp_tools) if mcp_tools else 0}, respond_intermediate: 1, delegate: {1 if available_agents else 0})")
+        logger.info(f"[{self.name}] ✅ Created Bedrock toolConfig: {len(bedrock_tools)} tools (MCP: {len(mcp_tools) if mcp_tools else 0}, delegate: {1 if available_agents else 0})")
         
         return {
             "tools": bedrock_tools
