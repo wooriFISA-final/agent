@@ -1,0 +1,27 @@
+# filename: report_agents.yaml
+
+agents:
+  report_agent: 
+    name: "report_agent" 
+    description: "소비, 투자, 정책 및 사용자 프로필 변동 데이터를 통합 분석하여 고객 맞춤형 월간 재무 보고서를 생성하는 Agent"
+    enabled: true
+
+    # 실행 제어 설정
+    max_retries: 3
+    timeout: 300  # 5분
+    max_iterations: 40
+
+    # Agent 분류 태그
+    tags:
+      - report
+      - analysis
+      - financial_data
+    
+    # LLM 설정
+    llm_config:
+      model: "gpt-oss-120b"
+      temperature: 0.1
+      top_p: 0.1
+      top_k: 20
+      stream: false
+      format: ""

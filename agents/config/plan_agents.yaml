@@ -1,0 +1,160 @@
+# ========================================
+# Plan / Loan / Saving / Fund / Summary Agents 설정
+# ========================================
+
+agents:
+  supervisor_agent:
+    name: "supervisor_agent"
+    description: "사용자의 주택 자금 계획 수립을 처음부터 끝까지 orchestration하는 최상위 의사결정자입니다."
+    enabled: true
+
+    max_retries: 3
+    timeout: 300          # 입력 대화형이라 넉넉하게
+    max_iterations: 15    # 질문-응답 반복 여유 있게
+
+    tags:
+      - plan
+
+    llm_config:
+      model: "gpt-oss-120b"
+      temperature: 0.01
+      top_p: 0.01
+      stream: false
+
+  # --------------------------------------
+  # 1) 사용자 주택 플랜 입력용 Agent
+  #    @AgentRegistry.register("plan_input_agent")
+  # --------------------------------------
+  plan_input_agent:
+    name: "plan_input_agent"
+    description: "사용자의 주택 자금/주택 플랜 정보를 대화형으로 수집하고 구조화하는 Agent"
+    enabled: true
+
+    max_retries: 3
+    timeout: 300          # 입력 대화형이라 넉넉하게
+    max_iterations: 15    # 질문-응답 반복 여유 있게
+
+    tags:
+      - plan
+      - input
+
+    llm_config:
+      model: "gpt-oss-120b"
+      temperature: 0.01
+      top_p: 0.01
+      stream: false
+
+  # --------------------------------------
+  # 2) 입력 검증 / 정규화 Agent
+  #    @AgentRegistry.register("validation_agent")
+  # --------------------------------------
+  validation_agent:
+    name: "validation_agent"
+    description: "사용자 입력 데이터를 검증·정규화하고, 금액/지역명을 파싱·보정하는 Agent"
+    enabled: true
+
+    max_retries: 3
+    timeout: 180
+    max_iterations: 10
+
+    tags:
+      - plan
+      - validation
+
+    llm_config:
+      model: "gpt-oss-120b"
+      temperature: 0.01
+      top_p: 0.01
+      stream: false
+
+  # --------------------------------------
+  # 3) 대출 한도/추천 Agent
+  #    파일: loan_agent_node.py
+  #    @AgentRegistry.register("loan_agent")
+  # --------------------------------------
+  loan_agent:
+    name: "loan_agent"
+    description: "사용자 소득·자산·주택 정보로 DSR/LTV를 계산하고 대출 한도 및 상품을 추천하는 Agent"
+    enabled: true
+
+    max_retries: 3
+    timeout: 240
+    max_iterations: 12
+
+    tags:
+      - plan
+      - loan
+
+    llm_config:
+      model: "gpt-oss-120b"
+      temperature: 0.01
+      top_p: 0.01
+      stream: false
+  # --------------------------------------
+  # 4) 예·적금 추천 및 입력 Agent
+  #    @AgentRegistry.register("saving_agent")
+  # --------------------------------------
+  saving_agent:
+    name: "saving_agent"
+    description: "부족 자금/목표 기간 등을 바탕으로 예·적금 상품을 추천하고 사용자의 선호를 추가로 입력받는 Agent"
+    enabled: true
+
+    max_retries: 3
+    timeout: 240
+    max_iterations: 15     # 상품 조합·질문 왕복 여유
+
+    tags:
+      - plan
+      - saving
+      - input
+
+    llm_config:
+      model: "gpt-oss-120b"
+      temperature: 0.01
+      top_p: 0.01
+      stream: false
+  # --------------------------------------
+  # 5) 펀드 추천 및 입력 Agent
+  #    @AgentRegistry.register("fund_agent")
+  # --------------------------------------
+  fund_agent:
+    name: "fund_agent"
+    description: "투자 성향과 부족 자금, 목표 기간에 맞는 펀드 상품을 추천하고 사용자의 투자 선호를 입력받는 Agent"
+    enabled: true
+
+    max_retries: 3
+    timeout: 240
+    max_iterations: 15
+
+    tags:
+      - plan
+      - fund
+      - input
+
+    llm_config:
+      model: "gpt-oss-20b"
+      temperature: 0.01
+      top_p: 0.01
+      stream: false
+  # --------------------------------------
+  # 6) 최종 자산관리 요약 리포트 Agent
+  #    @AgentRegistry.register("summary_agent")
+  # --------------------------------------
+  summary_agent:
+    name: "summary_agent"
+    description: "Plan/Loan/Saving/Fund 결과를 종합하여 우리은행 프리미엄 자산관리 리포트를 작성하는 Agent"
+    enabled: true
+
+    max_retries: 3
+    timeout: 300          # 리포트 작성이라 넉넉하게
+    max_iterations: 12
+
+    tags:
+      - plan
+      - report
+
+    llm_config:
+      model: "gpt-oss-20b"
+      temperature: 0.4
+      top_p: 0.8
+      stream: false

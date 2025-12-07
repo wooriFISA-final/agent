@@ -1,42 +1,33 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-from fastapi.middleware.cors import CORSMiddleware
-import asyncio
-from plan_graph import create_graph
-from langchain_core.messages import HumanMessage
+"""
+Multi-Agent System 서버 실행 스크립트
 
-app = FastAPI(title="Multi-Agent Planner")
+이 스크립트는 Multi-Agent System의 FastAPI 서버를 시작합니다.
 
-# CORS 설정
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+사용법:
+    uv run main.py
 
-# 그래프 초기화
-graph = create_graph()
+서버는 자동으로 다음 작업을 수행합니다:
+- MCP 서버 연결
+- Agent 로드 및 등록
+- Router 등록
+- Graph 빌드
+- API 서버 시작
+"""
+import uvicorn
 
-class ChatRequest(BaseModel):
-    message: str
-    session_id: str = "default-session"
+from core.config.setting import settings
+from core.logging.logger import setup_logger
 
-class ChatResponse(BaseModel):
-    response: str
+logger = setup_logger()
 
-@app.post("/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest):
-    """Front → AI Graph → Output"""
-    config = {"configurable": {"thread_id": request.session_id}}
-    result = await graph.ainvoke({"messages": [HumanMessage(content=request.message)]}, config=config)
 
-    messages = result.get("messages", [])
-    if not messages:
-        return ChatResponse(response="응답을 생성할 수 없습니다.")
-    return ChatResponse(response=messages[-1].content)
-
-@app.get("/")
-async def root():
-    return {"status": "ok", "message": "AI Agent API is running 🚀"}
+if __name__ == "__main__":
+    logger.info(f"🚀 Starting API Server on http://{settings.API_HOST}:{settings.API_PORT}")
+    
+    uvicorn.run(
+        "api.app:app",
+        host=settings.API_HOST,
+        port=settings.API_PORT,
+        reload=True,
+        log_level=settings.LOG_LEVEL.lower()
+    )

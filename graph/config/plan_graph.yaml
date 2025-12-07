@@ -1,0 +1,130 @@
+# ============================================
+# Plan Graph Configuration
+# ============================================
+# 재무 계획 관련 그래프
+# - supervisor_agent가 전체 플로우를 조율
+# - 입력(input) → 검증(validation) → (loan / saving / fund / summary) 단계 진행
+# ============================================
+
+# ============================================
+# Agent 노드 정의
+# ============================================
+nodes:
+  # 0) Supervisor Agent
+  - name: supervisor_agent
+    agent: supervisor_agent
+    config:
+      max_iterations: 10
+      timeout: 300
+
+  # 1) 사용자 주택 플랜 입력 Agent
+  - name: plan_input_agent
+    agent: plan_input_agent
+    config:
+      max_iterations: 15
+      timeout: 300
+
+  # 2) 입력 검증 / 정규화 Agent
+  - name: validation_agent
+    agent: validation_agent
+    config:
+      max_iterations: 10
+      timeout: 240
+
+  # 3) 대출 한도/추천 Agent
+  - name: loan_agent
+    agent: loan_agent
+    config:
+      max_iterations: 10
+      timeout: 240
+
+  # 4) 예·적금 추천 + 추가 입력 Agent
+  - name: saving_agent
+    agent: saving_agent
+    config:
+      max_iterations: 15
+      timeout: 240
+
+  # 5) 펀드 추천 + 추가 입력 Agent
+  - name: fund_agent
+    agent: fund_agent
+    config:
+      max_iterations: 15
+      timeout: 240
+
+  # 6) 최종 요약 리포트 Agent
+  - name: summary_agent
+    agent: summary_agent
+    config:
+      max_iterations: 10
+      timeout: 300
+
+# ============================================
+# Edge 정의
+# ============================================
+edges:
+  # ------------------------------------------------
+  # Conditional edges (DynamicRouter 사용)
+  # ------------------------------------------------
+  conditional:
+    - from: supervisor_agent
+      router: DynamicRouter
+      paths:
+        plan_input_agent: plan_input_agent
+        validation_agent: validation_agent
+        loan_agent: loan_agent
+        saving_agent: saving_agent
+        fund_agent: fund_agent
+        summary_agent: summary_agent
+        END: __end__
+
+    - from: plan_input_agent
+      router: DynamicRouter
+      paths:
+        validation_agent: validation_agent
+        supervisor_agent: supervisor_agent
+        plan_input_agent: plan_input_agent
+
+        END: __end__
+
+    - from: validation_agent
+      router: DynamicRouter
+      paths:
+        plan_input_agent: plan_input_agent
+        validation_agent: validation_agent        
+        supervisor_agent: supervisor_agent
+        END: __end__
+
+    - from: loan_agent
+      router: DynamicRouter
+      paths:
+        supervisor_agent: supervisor_agent
+        loan_agent: loan_agent
+        END: __end__
+
+    - from: saving_agent
+      router: DynamicRouter
+      paths:
+        supervisor_agent: supervisor_agent
+        saving_agent: saving_agent
+        END: __end__
+
+    - from: fund_agent
+      router: DynamicRouter
+      paths:
+        supervisor_agent: supervisor_agent
+        fund_agent: fund_agent
+        END: __end__
+
+    # summary_agent는 plan의 마지막 단계이기 때문에 다시 supervisor로 갈 필요가 없음
+    - from: summary_agent
+      router: DynamicRouter
+      paths:
+        supervisor_agent: supervisor_agent
+        summary_agent: summary_agent
+        END: __end__
+      
+# ============================================
+# Graph 설정
+# ============================================
+entry_point: supervisor_agent

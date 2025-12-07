@@ -1,0 +1,18 @@
+entry_point: report_main_builder
+
+nodes:
+  # 통합 보고서 작성 노드
+  - name: report_main_builder
+    agent: report_agent 
+    config:
+      max_iterations: 40
+      timeout: 600 # 8분
+      
+edges:
+  # 최종 완료 (DynamicRouter)
+  - from: report_main_builder
+    router: DynamicRouter
+    paths:
+      REPORT_COMPLETE: __end__
+      END: __end__
+
