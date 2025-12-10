@@ -53,43 +53,7 @@
 ---
 
 ## 🏗 Architecture
-![alt text](image.png)
-
-```mermaid
-graph TB
-    subgraph Client
-        A[Frontend / API Client]
-    end
-    
-    subgraph Agent Server
-        B[FastAPI Application]
-        C[LangGraph Engine]
-        
-        subgraph Agents
-            D[Supervisor Agent]
-            E[Input Agent]
-            F[Saving Agent]
-            G[Loan Agent]
-            H[Fund Agent]
-            I[Summary Agent]
-            J[Validation Agent]
-        end
-    end
-    
-    subgraph External Services
-        K[AWS Bedrock / LLM]
-        L[MCP Server]
-        M[Backend API]
-    end
-    
-    A --> B
-    B --> C
-    C --> D
-    D --> E & F & G & H & I & J
-    D --> K
-    F & G & H --> L
-    L --> M
-```
+<img width="20446" height="15864" alt="Image" src="https://github.com/user-attachments/assets/adc46a8c-c3e4-4ba5-a905-fec58e085255" />
 
 ---
 
